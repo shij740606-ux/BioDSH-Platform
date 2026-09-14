@@ -1,0 +1,12 @@
+{
+  "sshExecutable": "%SystemRoot%\\System32\\OpenSSH\\ssh.exe",
+  "sshHost": "server.example.internal",
+  "sshPort": 22,
+  "sshUser": "biodsh",
+  "localAddress": "127.0.0.1",
+  "localPort": 18080,
+  "remoteAddress": "127.0.0.1",
+  "remotePort": 8000,
+  "knownHostsPath": "%USERPROFILE%\\BioDSH\\ssh_known_hosts",
+  "retrySeconds": 15
+}
