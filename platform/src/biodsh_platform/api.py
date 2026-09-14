@@ -1,8 +1,11 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import delete, func, select, text
+from fastapi.responses import FileResponse
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -15,6 +18,7 @@ from biodsh_platform.models import (
     AuditLog,
     ComputeNode,
     Job,
+    JobArtifact,
     JobEvent,
     JobStatus,
     NodeMetric,
@@ -24,10 +28,12 @@ from biodsh_platform.models import (
     ProjectRole,
     RefreshToken,
     User,
+    new_id,
 )
 from biodsh_platform.schemas import (
     AuditLogRead,
     HealthRead,
+    JobArtifactRead,
     JobCreate,
     JobEventRead,
     JobRead,
@@ -48,6 +54,10 @@ from biodsh_platform.schemas import (
     UserCreate,
     UserRead,
     UserUpdate,
+    WorkerClaim,
+    WorkerJobComplete,
+    WorkerJobControl,
+    WorkerJobEventCreate,
 )
 from biodsh_platform.security import (
     AdminUser,
@@ -64,7 +74,12 @@ from biodsh_platform.security import (
     password_hasher,
     verify_password,
 )
-from biodsh_platform.services import append_job_event, get_job_or_404, request_job_cancellation
+from biodsh_platform.services import (
+    append_job_event,
+    get_job_or_404,
+    job_fits_node,
+    request_job_cancellation,
+)
 
 DbSession = Annotated[Session, Depends(get_db)]
 health_router = APIRouter(tags=["health"])
@@ -87,6 +102,23 @@ def token_response(db: Session, user: User) -> tuple[TokenRead, RefreshToken]:
 
 def aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def assigned_job(db: Session, node: ComputeNode, job_id: str) -> Job:
+    job = db.get(Job, job_id)
+    if job is None or job.node_id != node.id:
+        raise HTTPException(status_code=404, detail="Assigned job not found")
+    return job
+
+
+def artifact_relative_path(value: str) -> str:
+    path = PurePosixPath(value.replace("\\", "/"))
+    if path.is_absolute() or not path.parts or ".." in path.parts:
+        raise HTTPException(status_code=422, detail="Invalid artifact path")
+    normalized = str(path)
+    if len(normalized) > 500:
+        raise HTTPException(status_code=422, detail="Artifact path is too long")
+    return normalized
 
 
 def project_response(db: Session, user: User, project: Project) -> ProjectRead:
@@ -158,6 +190,9 @@ def platform_metadata() -> PlatformMetadata:
             "audit-log",
             "multi-node",
             "node-resource-metrics",
+            "leased-job-execution",
+            "live-job-events",
+            "job-artifacts",
         ],
     )
 
@@ -606,6 +641,266 @@ def list_node_metrics(
     return rows
 
 
+@api_router.post("/nodes/{node_id}/jobs/claim", response_model=JobRead | None)
+def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -> Job | None:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    cutoff = datetime.now(UTC) - timedelta(seconds=get_settings().node_offline_seconds)
+    if (
+        node.status != NodeStatus.ONLINE
+        or node.last_heartbeat_at is None
+        or aware(node.last_heartbeat_at) < cutoff
+    ):
+        raise HTTPException(status_code=409, detail="Node is not available for new jobs")
+    advertised = (node.capabilities or {}).get("executors", [])
+    if not isinstance(advertised, list) or not set(body.supported_kinds).issubset(advertised):
+        raise HTTPException(status_code=422, detail="Worker requested an unadvertised job kind")
+    now = datetime.now(UTC)
+    expired = list(
+        db.scalars(
+            select(Job).where(
+                Job.lease_expires_at < now,
+                Job.status.in_(
+                    [
+                        JobStatus.ASSIGNED,
+                        JobStatus.PREPARING,
+                        JobStatus.RUNNING,
+                        JobStatus.CANCELLING,
+                    ]
+                ),
+            )
+        )
+    )
+    for stale in expired:
+        if stale.status == JobStatus.ASSIGNED:
+            stale.status = JobStatus.QUEUED
+            stale.node_id = None
+            stale.assigned_at = None
+            stale.lease_expires_at = None
+            append_job_event(
+                db,
+                stale,
+                kind="status",
+                message="Assignment lease expired; job requeued",
+                payload={"status": JobStatus.QUEUED},
+            )
+        else:
+            stale.status = JobStatus.UNKNOWN
+            stale.finished_at = now
+            stale.lease_expires_at = None
+            stale.error_message = "Worker lease expired while the job was active"
+            append_job_event(
+                db,
+                stale,
+                kind="status",
+                message=stale.error_message,
+                payload={"status": JobStatus.UNKNOWN},
+            )
+    latest_metric = db.scalar(
+        select(NodeMetric)
+        .where(NodeMetric.node_id == node.id)
+        .order_by(NodeMetric.collected_at.desc())
+        .limit(1)
+    )
+    candidates = list(
+        db.scalars(
+            select(Job)
+            .where(Job.status == JobStatus.QUEUED, Job.kind.in_(body.supported_kinds))
+            .order_by(Job.priority.desc(), Job.created_at)
+            .limit(100)
+        )
+    )
+    lease_expires_at = now + timedelta(seconds=get_settings().job_lease_seconds)
+    for candidate in candidates:
+        if not job_fits_node(candidate, node, latest_metric):
+            continue
+        claimed = db.execute(
+            update(Job)
+            .where(Job.id == candidate.id, Job.status == JobStatus.QUEUED)
+            .values(
+                status=JobStatus.ASSIGNED,
+                node_id=node.id,
+                assigned_at=now,
+                lease_expires_at=lease_expires_at,
+                attempt=Job.attempt + 1,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            continue
+        db.expire_all()
+        job = db.get(Job, candidate.id)
+        append_job_event(
+            db,
+            job,
+            kind="status",
+            message=f"Job assigned to {node.name}",
+            payload={"status": JobStatus.ASSIGNED, "node_id": node.id},
+        )
+        db.commit()
+        db.refresh(job)
+        return job
+    db.commit()
+    return None
+
+
+@api_router.post("/nodes/{node_id}/jobs/{job_id}/start", response_model=JobRead)
+def start_job(node_id: str, job_id: str, db: DbSession, node: NodeActor) -> Job:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    job = assigned_job(db, node, job_id)
+    if job.status == JobStatus.CANCELLING:
+        raise HTTPException(status_code=409, detail="Job cancellation is already requested")
+    if job.status != JobStatus.ASSIGNED:
+        raise HTTPException(status_code=409, detail=f"Cannot start job in state '{job.status}'")
+    job.status = JobStatus.RUNNING
+    job.started_at = datetime.now(UTC)
+    job.lease_expires_at = datetime.now(UTC) + timedelta(seconds=get_settings().job_lease_seconds)
+    append_job_event(
+        db, job, kind="status", message="Job started", payload={"status": JobStatus.RUNNING}
+    )
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@api_router.post("/nodes/{node_id}/jobs/{job_id}/events", response_model=JobEventRead)
+def create_worker_job_event(
+    node_id: str,
+    job_id: str,
+    body: WorkerJobEventCreate,
+    db: DbSession,
+    node: NodeActor,
+) -> JobEvent:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    job = assigned_job(db, node, job_id)
+    if job.status not in {JobStatus.RUNNING, JobStatus.CANCELLING}:
+        raise HTTPException(status_code=409, detail="Job is not running")
+    event = append_job_event(db, job, kind=body.kind, message=body.message, payload=body.payload)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@api_router.post("/nodes/{node_id}/jobs/{job_id}/control", response_model=WorkerJobControl)
+def worker_job_control(
+    node_id: str, job_id: str, db: DbSession, node: NodeActor
+) -> WorkerJobControl:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    job = assigned_job(db, node, job_id)
+    if job.status not in {JobStatus.ASSIGNED, JobStatus.RUNNING, JobStatus.CANCELLING}:
+        raise HTTPException(status_code=409, detail="Job is no longer active")
+    job.lease_expires_at = datetime.now(UTC) + timedelta(seconds=get_settings().job_lease_seconds)
+    db.commit()
+    return WorkerJobControl(
+        cancel_requested=job.status == JobStatus.CANCELLING,
+        lease_expires_at=job.lease_expires_at,
+    )
+
+
+@api_router.post("/nodes/{node_id}/jobs/{job_id}/complete", response_model=JobRead)
+def complete_job(
+    node_id: str,
+    job_id: str,
+    body: WorkerJobComplete,
+    db: DbSession,
+    node: NodeActor,
+) -> Job:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    job = assigned_job(db, node, job_id)
+    if job.status not in {JobStatus.ASSIGNED, JobStatus.RUNNING, JobStatus.CANCELLING}:
+        raise HTTPException(status_code=409, detail="Job is no longer active")
+    job.status = JobStatus.CANCELLED if job.status == JobStatus.CANCELLING else body.status
+    job.finished_at = datetime.now(UTC)
+    job.lease_expires_at = None
+    job.exit_code = body.exit_code
+    job.result_manifest = body.result_manifest
+    job.error_message = body.error_message
+    append_job_event(
+        db,
+        job,
+        kind="status",
+        message=f"Job {job.status}",
+        payload={"status": job.status, "exit_code": body.exit_code},
+    )
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@api_router.put(
+    "/nodes/{node_id}/jobs/{job_id}/artifacts/{relative_path:path}",
+    response_model=JobArtifactRead,
+)
+async def upload_job_artifact(
+    node_id: str,
+    job_id: str,
+    relative_path: str,
+    request: Request,
+    db: DbSession,
+    node: NodeActor,
+) -> JobArtifact:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    job = assigned_job(db, node, job_id)
+    if job.status not in {JobStatus.RUNNING, JobStatus.CANCELLING}:
+        raise HTTPException(status_code=409, detail="Job is not accepting artifacts")
+    relative_path = artifact_relative_path(relative_path)
+    settings = get_settings()
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > settings.artifact_max_bytes:
+                raise HTTPException(status_code=413, detail="Artifact exceeds configured limit")
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length") from error
+    artifact_id = new_id()
+    root = settings.artifact_root.resolve()
+    target_dir = root / job.id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / artifact_id
+    temporary = target.with_suffix(".part")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with temporary.open("wb") as handle:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > settings.artifact_max_bytes:
+                    raise HTTPException(status_code=413, detail="Artifact exceeds configured limit")
+                digest.update(chunk)
+                handle.write(chunk)
+        temporary.replace(target)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    existing = db.scalar(
+        select(JobArtifact).where(
+            JobArtifact.job_id == job.id, JobArtifact.relative_path == relative_path
+        )
+    )
+    if existing is not None:
+        (root / existing.storage_key).unlink(missing_ok=True)
+        db.delete(existing)
+        db.flush()
+    artifact = JobArtifact(
+        id=artifact_id,
+        job_id=job.id,
+        relative_path=relative_path,
+        storage_key=str(target.relative_to(root)).replace("\\", "/"),
+        size_bytes=size,
+        sha256=digest.hexdigest(),
+        content_type=request.headers.get("content-type", "application/octet-stream")[:160],
+    )
+    db.add(artifact)
+    db.commit()
+    db.refresh(artifact)
+    return artifact
+
+
 @api_router.post("/jobs", response_model=JobRead, status_code=status.HTTP_201_CREATED)
 def create_job(body: JobCreate, db: DbSession, user: CurrentUser) -> Job:
     require_project(db, user, body.project_id, ProjectRole.ANALYST)
@@ -614,6 +909,7 @@ def create_job(body: JobCreate, db: DbSession, user: CurrentUser) -> Job:
         kind=body.kind,
         payload=body.payload,
         requested_resources=body.requested_resources,
+        priority=body.priority,
         created_by=user.id,
         status=JobStatus.QUEUED,
     )
@@ -633,6 +929,23 @@ def create_job(body: JobCreate, db: DbSession, user: CurrentUser) -> Job:
     db.commit()
     db.refresh(job)
     return job
+
+
+@api_router.get("/job-kinds", response_model=list[str])
+def list_job_kinds(db: DbSession, _: CurrentUser) -> list[str]:
+    cutoff = datetime.now(UTC) - timedelta(seconds=get_settings().node_offline_seconds)
+    nodes = db.scalars(
+        select(ComputeNode).where(
+            ComputeNode.status == NodeStatus.ONLINE,
+            ComputeNode.last_heartbeat_at >= cutoff,
+        )
+    )
+    kinds: set[str] = set()
+    for node in nodes:
+        values = (node.capabilities or {}).get("executors", [])
+        if isinstance(values, list):
+            kinds.update(value for value in values if isinstance(value, str) and value)
+    return sorted(kinds)
 
 
 @api_router.get("/jobs", response_model=list[JobRead])
@@ -674,11 +987,54 @@ def cancel_job(job_id: str, db: DbSession, user: CurrentUser) -> Job:
 
 
 @api_router.get("/jobs/{job_id}/events", response_model=list[JobEventRead])
-def list_job_events(job_id: str, db: DbSession, user: CurrentUser) -> list[JobEvent]:
+def list_job_events(
+    job_id: str, db: DbSession, user: CurrentUser, limit: int = 1000
+) -> list[JobEvent]:
+    job = get_job_or_404(db, job_id)
+    require_project(db, user, job.project_id)
+    limit = max(1, min(limit, 2000))
+    rows = list(
+        db.scalars(
+            select(JobEvent)
+            .where(JobEvent.job_id == job_id)
+            .order_by(JobEvent.sequence.desc())
+            .limit(limit)
+        )
+    )
+    rows.reverse()
+    return rows
+
+
+@api_router.get("/jobs/{job_id}/artifacts", response_model=list[JobArtifactRead])
+def list_job_artifacts(job_id: str, db: DbSession, user: CurrentUser) -> list[JobArtifact]:
     job = get_job_or_404(db, job_id)
     require_project(db, user, job.project_id)
     return list(
-        db.scalars(select(JobEvent).where(JobEvent.job_id == job_id).order_by(JobEvent.sequence))
+        db.scalars(
+            select(JobArtifact)
+            .where(JobArtifact.job_id == job_id)
+            .order_by(JobArtifact.relative_path)
+        )
+    )
+
+
+@api_router.get("/jobs/{job_id}/artifacts/{artifact_id}", response_class=FileResponse)
+def download_job_artifact(
+    job_id: str, artifact_id: str, db: DbSession, user: CurrentUser
+) -> FileResponse:
+    job = get_job_or_404(db, job_id)
+    require_project(db, user, job.project_id)
+    artifact = db.get(JobArtifact, artifact_id)
+    if artifact is None or artifact.job_id != job.id:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    root = get_settings().artifact_root.resolve()
+    target = (root / artifact.storage_key).resolve()
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(status_code=404, detail="Artifact file not found")
+    return FileResponse(
+        target,
+        media_type=artifact.content_type,
+        filename=PurePosixPath(artifact.relative_path).name,
     )
 
 

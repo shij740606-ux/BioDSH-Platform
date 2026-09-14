@@ -1,5 +1,8 @@
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::io;
+use std::path::Path;
 
 const SERVICE: &str = "BioDSH Platform";
 const ACCOUNT: &str = "desktop-session";
@@ -130,6 +133,40 @@ fn patch(
     }
 }
 
+fn post(
+    session: &StoredSession,
+    resource: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, u16> {
+    match ureq::post(&format!(
+        "{}{}{}",
+        session.base_url, session.api_path, resource
+    ))
+    .set("Authorization", &format!("Bearer {}", session.access_token))
+    .timeout(std::time::Duration::from_secs(15))
+    .send_json(body)
+    {
+        Ok(response) => parse(response).map_err(|_| 502),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(_) => Err(503),
+    }
+}
+
+fn post_with_refresh(
+    session: &mut StoredSession,
+    resource: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match post(session, resource, body.clone()) {
+        Ok(value) => Ok(value),
+        Err(401) => {
+            refresh(session)?;
+            post(session, resource, body).map_err(|code| format!("平台连接失败：HTTP {code}"))
+        }
+        Err(code) => Err(format!("平台连接失败：HTTP {code}")),
+    }
+}
+
 fn configured_session(configured_url: &str) -> Result<StoredSession, String> {
     let configured = configured_url.trim().trim_end_matches('/');
     let session = load().ok_or_else(|| "请先登录平台".to_string())?;
@@ -163,6 +200,35 @@ fn normalize_node(value: &serde_json::Value) -> serde_json::Value {
         "hostname": value["hostname"], "operatingSystem": value["operating_system"],
         "agentVersion": value["agent_version"], "capabilities": value["capabilities"],
         "latestMetric": metric, "lastHeartbeatAt": value["last_heartbeat_at"]
+    })
+}
+
+fn normalize_job(value: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id": value["id"], "projectId": value["project_id"], "nodeId": value["node_id"],
+        "kind": value["kind"], "status": value["status"], "payload": value["payload"],
+        "requestedResources": value["requested_resources"], "priority": value["priority"],
+        "attempt": value["attempt"], "assignedAt": value["assigned_at"],
+        "startedAt": value["started_at"], "finishedAt": value["finished_at"],
+        "exitCode": value["exit_code"], "resultManifest": value["result_manifest"],
+        "errorMessage": value["error_message"], "createdAt": value["created_at"],
+        "updatedAt": value["updated_at"]
+    })
+}
+
+fn normalize_job_event(value: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id": value["id"], "jobId": value["job_id"], "sequence": value["sequence"],
+        "kind": value["kind"], "message": value["message"], "payload": value["payload"],
+        "createdAt": value["created_at"]
+    })
+}
+
+fn normalize_artifact(value: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id": value["id"], "jobId": value["job_id"], "relativePath": value["relative_path"],
+        "sizeBytes": value["size_bytes"], "sha256": value["sha256"],
+        "contentType": value["content_type"], "createdAt": value["created_at"]
     })
 }
 
@@ -267,6 +333,110 @@ pub fn update_node(
         Err(code) => return Err(format!("服务器状态更新失败：HTTP {code}")),
     };
     Ok(normalize_node(&value))
+}
+
+pub fn jobs(configured_url: &str, project_id: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let resource = format!("/jobs?project_id={project_id}");
+    let values = get_with_refresh(&mut session, &resource)?;
+    let rows = values.as_array().ok_or("任务列表响应无效")?;
+    Ok(serde_json::Value::Array(
+        rows.iter().map(normalize_job).collect(),
+    ))
+}
+
+pub fn job_kinds(configured_url: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    get_with_refresh(&mut session, "/job-kinds")
+}
+
+pub fn create_job(
+    configured_url: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let body = serde_json::json!({
+        "project_id": input["projectId"], "kind": input["kind"],
+        "payload": { "arguments": input["arguments"] },
+        "requested_resources": input["requestedResources"],
+        "priority": input.get("priority").cloned().unwrap_or(serde_json::json!(0))
+    });
+    Ok(normalize_job(&post_with_refresh(
+        &mut session,
+        "/jobs",
+        body,
+    )?))
+}
+
+pub fn cancel_job(configured_url: &str, job_id: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let value = post_with_refresh(
+        &mut session,
+        &format!("/jobs/{job_id}/cancel"),
+        serde_json::json!({}),
+    )?;
+    Ok(normalize_job(&value))
+}
+
+pub fn job_events(configured_url: &str, job_id: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let values = get_with_refresh(&mut session, &format!("/jobs/{job_id}/events"))?;
+    let rows = values.as_array().ok_or("任务日志响应无效")?;
+    Ok(serde_json::Value::Array(
+        rows.iter().map(normalize_job_event).collect(),
+    ))
+}
+
+pub fn job_artifacts(configured_url: &str, job_id: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let values = get_with_refresh(&mut session, &format!("/jobs/{job_id}/artifacts"))?;
+    let rows = values.as_array().ok_or("任务结果响应无效")?;
+    Ok(serde_json::Value::Array(
+        rows.iter().map(normalize_artifact).collect(),
+    ))
+}
+
+pub fn download_job_artifact(
+    configured_url: &str,
+    job_id: &str,
+    artifact_id: &str,
+    target: &Path,
+) -> Result<(), String> {
+    let mut session = configured_session(configured_url)?;
+    let resource = format!("/jobs/{job_id}/artifacts/{artifact_id}");
+    for attempt in 0..2 {
+        let response = ureq::get(&format!(
+            "{}{}{}",
+            session.base_url, session.api_path, resource
+        ))
+        .set("Authorization", &format!("Bearer {}", session.access_token))
+        .timeout(std::time::Duration::from_secs(120))
+        .call();
+        match response {
+            Ok(response) => {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                let temporary = target.with_extension("part");
+                let mut output = fs::File::create(&temporary).map_err(|e| e.to_string())?;
+                if let Err(error) = io::copy(&mut response.into_reader(), &mut output) {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error.to_string());
+                }
+                if target.exists() {
+                    fs::remove_file(target).map_err(|e| e.to_string())?;
+                }
+                fs::rename(&temporary, target).map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+            Err(ureq::Error::Status(401, _)) if attempt == 0 => refresh(&mut session)?,
+            Err(ureq::Error::Status(code, _)) => {
+                return Err(format!("结果下载失败：HTTP {code}"));
+            }
+            Err(_) => return Err("结果下载失败：网络连接不可用".into()),
+        }
+    }
+    Err("结果下载失败".into())
 }
 
 pub fn logout(configured_url: &str) -> serde_json::Value {

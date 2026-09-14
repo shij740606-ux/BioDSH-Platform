@@ -10,6 +10,7 @@ import SettingsView from './views/SettingsView';
 import Onboarding from './views/Onboarding';
 import LoginView from './views/LoginView';
 import ServersView from './views/ServersView';
+import TasksView from './views/TasksView';
 import AskPopover from './components/AskPopover';
 import AutoUpdate from './components/AutoUpdate';
 import StarPrompt from './components/StarPrompt';
@@ -39,6 +40,7 @@ function Shell() {
         {tab === 'chat' && <ChatView />}
         {tab === 'data' && <DataView />}
         {tab === 'db' && <DatabaseView />}
+        {tab === 'tasks' && <TasksView />}
         {tab === 'servers' && <ServersView />}
         {tab === 'store' && <StoreView />}
         {tab === 'env' && <EnvView />}

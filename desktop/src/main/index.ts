@@ -153,6 +153,13 @@ function registerIpc() {
   ipcMain.handle('platform:nodes', () => platformAuth.nodes());
   ipcMain.handle('platform:nodeMetrics', (_e, nodeId: string, minutes: number) => platformAuth.nodeMetrics(nodeId, minutes));
   ipcMain.handle('platform:updateNode', (_e, nodeId: string, status: 'online' | 'draining' | 'disabled') => platformAuth.updateNode(nodeId, status));
+  ipcMain.handle('platform:jobs', (_e, projectId: string) => platformAuth.jobs(projectId));
+  ipcMain.handle('platform:jobKinds', () => platformAuth.jobKinds());
+  ipcMain.handle('platform:createJob', (_e, input) => platformAuth.createJob(input));
+  ipcMain.handle('platform:cancelJob', (_e, jobId: string) => platformAuth.cancelJob(jobId));
+  ipcMain.handle('platform:jobEvents', (_e, jobId: string) => platformAuth.jobEvents(jobId));
+  ipcMain.handle('platform:jobArtifacts', (_e, jobId: string) => platformAuth.jobArtifacts(jobId));
+  ipcMain.handle('platform:downloadJobArtifact', (_e, jobId: string, artifact) => platformAuth.downloadJobArtifact(jobId, artifact));
   ipcMain.handle('credential:get', () => readCredential(paths));
   ipcMain.handle('credential:set', async (_e, key: string) => { writeCredential(paths, key); if (dsh.status.state !== 'stopped') { const s = await dsh.restart(settings.workspace || paths.workspace); if (s.state === 'running' && s.url) ensureDshView(s.url); } return readCredential(paths); });
   const openSession = (id: string) => dshView?.webContents.executeJavaScript(`try { localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: ${JSON.stringify(id)} })); } catch (e) {} location.reload();`);

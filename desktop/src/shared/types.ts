@@ -138,6 +138,52 @@ export interface PlatformNode {
   lastHeartbeatAt?: string;
 }
 
+export type PlatformJobStatus = 'queued' | 'assigned' | 'preparing' | 'running' | 'cancelling' | 'cancelled' | 'succeeded' | 'failed' | 'unknown';
+export interface PlatformJob {
+  id: string;
+  projectId: string;
+  nodeId?: string;
+  kind: string;
+  status: PlatformJobStatus;
+  payload: Record<string, unknown>;
+  requestedResources: Record<string, number>;
+  priority: number;
+  attempt: number;
+  assignedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number;
+  resultManifest: Record<string, unknown>;
+  errorMessage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface PlatformJobEvent {
+  id: number;
+  jobId: string;
+  sequence: number;
+  kind: string;
+  message: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+export interface PlatformJobArtifact {
+  id: string;
+  jobId: string;
+  relativePath: string;
+  sizeBytes: number;
+  sha256: string;
+  contentType: string;
+  createdAt: string;
+}
+export interface PlatformJobCreate {
+  projectId: string;
+  kind: string;
+  arguments: string[];
+  requestedResources: Record<string, number>;
+  priority?: number;
+}
+
 export interface McpServer {
   name: string;
   transport: 'stdio' | 'streamable-http';

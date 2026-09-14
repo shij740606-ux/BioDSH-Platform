@@ -8,7 +8,9 @@ platform/.venv/
 platform/.env
 platform/*.db
 platform/.pytest_cache/
+platform/.pytest-temp/
 platform/.ruff_cache/
+platform/biodsh-artifacts/
 platform/**/__pycache__/
 # desktop build outputs (also covered by desktop/.gitignore)
 desktop/out/

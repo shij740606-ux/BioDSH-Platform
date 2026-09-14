@@ -169,6 +169,29 @@ class JobCreate(WriteModel):
     kind: str = Field(min_length=1, max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)
     requested_resources: dict[str, Any] = Field(default_factory=dict)
+    priority: int = Field(default=0, ge=-100, le=100)
+
+    @field_validator("kind")
+    @classmethod
+    def validate_kind(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Job kind cannot be empty")
+        return value
+
+    @field_validator("requested_resources")
+    @classmethod
+    def validate_resources(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"cpu", "memory_bytes", "disk_bytes", "gpu_count", "gpu_memory_mib"}
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported resource fields: {', '.join(sorted(unknown))}")
+        normalized: dict[str, int] = {}
+        for key, raw in value.items():
+            if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+                raise ValueError(f"Resource '{key}' must be a non-negative integer")
+            normalized[key] = raw
+        return normalized
 
 
 class JobRead(ApiModel):
@@ -179,6 +202,15 @@ class JobRead(ApiModel):
     status: str
     payload: dict[str, Any]
     requested_resources: dict[str, Any]
+    priority: int
+    attempt: int
+    assigned_at: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    lease_expires_at: datetime | None
+    exit_code: int | None
+    result_manifest: dict[str, Any]
+    error_message: str
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -191,6 +223,46 @@ class JobEventRead(ApiModel):
     kind: str
     message: str
     payload: dict[str, Any]
+    created_at: datetime
+
+
+class WorkerClaim(WriteModel):
+    supported_kinds: list[str] = Field(min_length=1, max_length=200)
+
+    @field_validator("supported_kinds")
+    @classmethod
+    def validate_kinds(cls, value: list[str]) -> list[str]:
+        kinds = list(dict.fromkeys(kind.strip() for kind in value if kind.strip()))
+        if not kinds or any(len(kind) > 120 for kind in kinds):
+            raise ValueError("supported_kinds contains an invalid job kind")
+        return kinds
+
+
+class WorkerJobEventCreate(WriteModel):
+    kind: Literal["log", "progress"] = "log"
+    message: str = Field(max_length=8000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkerJobComplete(WriteModel):
+    status: Literal["succeeded", "failed", "cancelled"]
+    exit_code: int | None = None
+    error_message: str = Field(default="", max_length=4000)
+    result_manifest: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkerJobControl(ApiModel):
+    cancel_requested: bool
+    lease_expires_at: datetime
+
+
+class JobArtifactRead(ApiModel):
+    id: str
+    job_id: str
+    relative_path: str
+    size_bytes: int
+    sha256: str
+    content_type: str
     created_at: datetime
 
 

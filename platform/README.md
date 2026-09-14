@@ -33,7 +33,7 @@ uv run biodsh-platform
 - Access tokens expire after `BIODSH_ACCESS_TOKEN_MINUTES` and validate signature, algorithm, issuer, audience, expiry, token type, and token version.
 - Refresh tokens are random opaque values. Only their SHA-256 digest is stored; every refresh rotates and revokes the previous token.
 - Administrators can revoke every active token for a user. This invalidates existing access tokens through the user's token version.
-- The static platform token is accepted only by first-administrator initialization, node registration, and node heartbeat endpoints.
+- The static platform token is accepted only by first-administrator initialization and one-time node registration. Heartbeats and job execution use the node's separate credential.
 
 System administrators manage users and nodes. Project owners manage membership, analysts submit and cancel jobs, and viewers read projects, jobs, events, and project audit records. The API checks membership for every resource ID and hides cross-project resources with `404`.
 
@@ -43,10 +43,14 @@ The Tauri desktop stores the platform session in the operating system keyring. O
 
 Each compute server runs `biodsh-worker`. Enrollment uses the bootstrap token once and returns a unique node credential; the database stores only its SHA-256 digest. Heartbeats use the per-node credential and report CPU, memory, disk, network, NVIDIA GPU, and running-job metrics. The desktop reads the consolidated node list and history through the Platform API, so adding servers does not add desktop credentials or direct SSH connections.
 
+Workers advertise locally configured executor kinds, atomically claim jobs that fit current CPU, memory, disk, and GPU capacity, renew execution leases, stream logs, process cancellation, and upload configured result files. Commands are fixed in the server-side executor registry and launched without a shell in an isolated job directory.
+
 ```powershell
 $env:BIODSH_WORKER_PLATFORM_URL = "https://platform.example.org"
 $env:BIODSH_WORKER_NODE_NAME = "compute-01"
 $env:BIODSH_WORKER_BOOTSTRAP_TOKEN = "replace-with-platform-bootstrap-token"
+$env:BIODSH_WORKER_EXECUTORS_FILE = "C:\BioDSH\executors.json"
+$env:BIODSH_WORKER_WORKSPACE_ROOT = "C:\BioDSH\jobs"
 uv run biodsh-worker enroll
 Remove-Item Env:BIODSH_WORKER_BOOTSTRAP_TOKEN
 uv run biodsh-worker run --once

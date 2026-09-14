@@ -1,6 +1,6 @@
 // Tauri 桥：把 window.biodsh 接口实现为 invoke/listen，与 Electron preload 暴露的接口保持一致。
 import { invoke } from '@tauri-apps/api/core';
-import type { PlatformNodeControlStatus } from '@shared/types';
+import type { PlatformJobCreate, PlatformNodeControlStatus } from '@shared/types';
 import { listen } from '@tauri-apps/api/event';
 import type { AppSettings, IpcEvent, Rect } from '@shared/types';
 
@@ -16,6 +16,13 @@ export function installTauriBridge() {
     platformNodes: () => invoke('platform_nodes'),
     platformNodeMetrics: (nodeId: string, minutes = 60) => invoke('platform_node_metrics', { nodeId, minutes }),
     platformUpdateNode: (nodeId: string, status: PlatformNodeControlStatus) => invoke('platform_update_node', { nodeId, status }),
+    platformJobs: (projectId: string) => invoke('platform_jobs', { projectId }),
+    platformJobKinds: () => invoke('platform_job_kinds'),
+    platformCreateJob: (input: PlatformJobCreate) => invoke('platform_create_job', { input }),
+    platformCancelJob: (jobId: string) => invoke('platform_cancel_job', { jobId }),
+    platformJobEvents: (jobId: string) => invoke('platform_job_events', { jobId }),
+    platformJobArtifacts: (jobId: string) => invoke('platform_job_artifacts', { jobId }),
+    platformDownloadJobArtifact: (jobId: string, artifact: { id: string; relativePath: string }) => invoke('platform_download_job_artifact', { jobId, artifactId: artifact.id, relativePath: artifact.relativePath }),
     getCredential: () => invoke('credential_get'),
     setCredential: (key: string) => invoke('credential_set', { key }),
     envStatus: () => invoke('env_status'),

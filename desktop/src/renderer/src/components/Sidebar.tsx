@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import wordmarkLight from '../assets/wordmark-light.png';
 import wordmarkDark from '../assets/wordmark-dark.png';
-import { SquarePen, Plus, Cpu, Store, Settings, Minus, Square, X, Folder, FolderPlus, GitBranch, GitCommitHorizontal, ChevronRight, ChevronDown, Wallet, MessageSquare, RefreshCw, Pin, Pencil, Archive, Share2, Trash2, FolderOpen, Sparkles, Loader2, Server } from 'lucide-react';
+import { SquarePen, Plus, Cpu, Store, Settings, Minus, Square, X, Folder, FolderPlus, GitBranch, GitCommitHorizontal, ChevronRight, ChevronDown, Wallet, MessageSquare, RefreshCw, Pin, Pencil, Archive, Share2, Trash2, FolderOpen, Sparkles, Loader2, Server, ListTodo } from 'lucide-react';
 import { useApp, type Tab } from '../store';
 import { Database, Globe } from 'lucide-react';
 import ContextMenu, { type MenuState } from './ContextMenu';
@@ -163,6 +163,7 @@ export default function Sidebar() {
         <button className="nav-item no-drag text-left" onClick={() => newSession()} disabled={busy || dsh.state !== 'running'}><SquarePen size={16} strokeWidth={2} /><span className="flex-1">{t('新对话')}</span></button>
         {nav('data', t('分析'), Database)}
         {nav('db', t('数据库'), Globe)}
+        {platform.authenticated && nav('tasks', t('计算任务'), ListTodo)}
         {platform.authenticated && nav('servers', t('计算服务器'), Server)}
         {nav('env', t('分析环境'), Cpu, envDot ? <span className="inline-block w-[7px] h-[7px] rounded-full" style={{ background: envDot }} /> : undefined)}
         {nav('store', t('技能商店'), Store)}

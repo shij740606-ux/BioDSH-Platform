@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -37,6 +38,9 @@ class Settings(BaseSettings):
     login_lock_minutes: int = Field(default=15, ge=1, le=1440)
     node_offline_seconds: int = Field(default=45, ge=15, le=600)
     metrics_retention_days: int = Field(default=7, ge=1, le=90)
+    job_lease_seconds: int = Field(default=45, ge=15, le=600)
+    artifact_root: Path = Path("./biodsh-artifacts")
+    artifact_max_bytes: int = Field(default=1_073_741_824, ge=1_048_576)
     auto_create_schema: bool = False
     cors_origins: list[str] = Field(default_factory=list)
 

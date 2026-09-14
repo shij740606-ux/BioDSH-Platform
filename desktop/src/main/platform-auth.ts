@@ -1,7 +1,9 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { safeStorage } from 'electron';
-import type { AppPaths, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformNodeStatus, PlatformProject, PlatformSession, PlatformUser } from '../shared/types';
+import type { AppPaths, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformJobStatus, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformNodeStatus, PlatformProject, PlatformSession, PlatformUser } from '../shared/types';
 
 interface StoredSession { baseUrl: string; apiPath: string; accessToken: string; refreshToken: string }
 interface TokenResponse { access_token: string; refresh_token: string; user: Record<string, unknown> }
@@ -25,6 +27,26 @@ function nodeFromApi(raw: Record<string, unknown>): PlatformNode {
     latestMetric: raw.latest_metric ? metricFromApi(raw.latest_metric as Record<string, unknown>) : undefined,
     lastHeartbeatAt: raw.last_heartbeat_at ? String(raw.last_heartbeat_at) : undefined,
   };
+}
+
+function jobFromApi(raw: Record<string, unknown>): PlatformJob {
+  return {
+    id: String(raw.id), projectId: String(raw.project_id), nodeId: raw.node_id ? String(raw.node_id) : undefined,
+    kind: String(raw.kind), status: raw.status as PlatformJobStatus, payload: raw.payload as Record<string, unknown> ?? {},
+    requestedResources: raw.requested_resources as Record<string, number> ?? {}, priority: Number(raw.priority), attempt: Number(raw.attempt),
+    assignedAt: raw.assigned_at ? String(raw.assigned_at) : undefined, startedAt: raw.started_at ? String(raw.started_at) : undefined,
+    finishedAt: raw.finished_at ? String(raw.finished_at) : undefined, exitCode: raw.exit_code == null ? undefined : Number(raw.exit_code),
+    resultManifest: raw.result_manifest as Record<string, unknown> ?? {}, errorMessage: String(raw.error_message ?? ''),
+    createdAt: String(raw.created_at), updatedAt: String(raw.updated_at),
+  };
+}
+
+function eventFromApi(raw: Record<string, unknown>): PlatformJobEvent {
+  return { id: Number(raw.id), jobId: String(raw.job_id), sequence: Number(raw.sequence), kind: String(raw.kind), message: String(raw.message), payload: raw.payload as Record<string, unknown> ?? {}, createdAt: String(raw.created_at) };
+}
+
+function artifactFromApi(raw: Record<string, unknown>): PlatformJobArtifact {
+  return { id: String(raw.id), jobId: String(raw.job_id), relativePath: String(raw.relative_path), sizeBytes: Number(raw.size_bytes), sha256: String(raw.sha256), contentType: String(raw.content_type), createdAt: String(raw.created_at) };
 }
 
 export class PlatformAuth {
@@ -130,6 +152,62 @@ export class PlatformAuth {
     });
     if (!response.ok) throw new Error(`服务器状态更新失败：HTTP ${response.status}`);
     return nodeFromApi(await response.json() as Record<string, unknown>);
+  }
+
+  async jobs(projectId: string): Promise<PlatformJob[]> {
+    const response = await this.request(this.session(), `/jobs?project_id=${encodeURIComponent(projectId)}`);
+    if (!response.ok) throw new Error(`任务读取失败：HTTP ${response.status}`);
+    return (await response.json() as Array<Record<string, unknown>>).map(jobFromApi);
+  }
+
+  async jobKinds(): Promise<string[]> {
+    const response = await this.request(this.session(), '/job-kinds');
+    if (!response.ok) throw new Error(`任务类型读取失败：HTTP ${response.status}`);
+    return await response.json() as string[];
+  }
+
+  async createJob(input: PlatformJobCreate): Promise<PlatformJob> {
+    const response = await this.request(this.session(), '/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: input.projectId, kind: input.kind, payload: { arguments: input.arguments }, requested_resources: input.requestedResources, priority: input.priority ?? 0 }) });
+    if (!response.ok) throw new Error(`任务提交失败：HTTP ${response.status}`);
+    return jobFromApi(await response.json() as Record<string, unknown>);
+  }
+
+  async cancelJob(jobId: string): Promise<PlatformJob> {
+    const response = await this.request(this.session(), `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    if (!response.ok) throw new Error(`取消任务失败：HTTP ${response.status}`);
+    return jobFromApi(await response.json() as Record<string, unknown>);
+  }
+
+  async jobEvents(jobId: string): Promise<PlatformJobEvent[]> {
+    const response = await this.request(this.session(), `/jobs/${encodeURIComponent(jobId)}/events`);
+    if (!response.ok) throw new Error(`任务日志读取失败：HTTP ${response.status}`);
+    return (await response.json() as Array<Record<string, unknown>>).map(eventFromApi);
+  }
+
+  async jobArtifacts(jobId: string): Promise<PlatformJobArtifact[]> {
+    const response = await this.request(this.session(), `/jobs/${encodeURIComponent(jobId)}/artifacts`);
+    if (!response.ok) throw new Error(`任务结果读取失败：HTTP ${response.status}`);
+    return (await response.json() as Array<Record<string, unknown>>).map(artifactFromApi);
+  }
+
+  async downloadJobArtifact(jobId: string, artifact: PlatformJobArtifact): Promise<string> {
+    const response = await this.request(this.session(), `/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(artifact.id)}`);
+    if (!response.ok || !response.body) throw new Error(`结果下载失败：HTTP ${response.status}`);
+    const directory = path.join(this.paths.root, 'results', jobId);
+    const parts = artifact.relativePath.replace(/\\/g, '/').split('/');
+    if (!parts.length || parts.some((part) => !part || part === '.' || part === '..')) throw new Error('结果文件名无效');
+    const target = path.join(directory, ...parts);
+    mkdirSync(path.dirname(target), { recursive: true });
+    const temporary = `${target}.part`;
+    try {
+      await pipeline(Readable.fromWeb(response.body as never), createWriteStream(temporary, { mode: 0o600 }));
+      if (existsSync(target)) unlinkSync(target);
+      renameSync(temporary, target);
+      return target;
+    } catch (error) {
+      if (existsSync(temporary)) unlinkSync(temporary);
+      throw error;
+    }
   }
 
   async logout(): Promise<PlatformSession> {

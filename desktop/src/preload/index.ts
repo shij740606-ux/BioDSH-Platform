@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession } from '../shared/types';
+import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession } from '../shared/types';
 
 const api = {
   appInfo: () => ipcRenderer.invoke('app:info'),
@@ -11,6 +11,13 @@ const api = {
   platformNodes: (): Promise<PlatformNode[]> => ipcRenderer.invoke('platform:nodes'),
   platformNodeMetrics: (nodeId: string, minutes = 60): Promise<PlatformNodeMetric[]> => ipcRenderer.invoke('platform:nodeMetrics', nodeId, minutes),
   platformUpdateNode: (nodeId: string, status: PlatformNodeControlStatus): Promise<PlatformNode> => ipcRenderer.invoke('platform:updateNode', nodeId, status),
+  platformJobs: (projectId: string): Promise<PlatformJob[]> => ipcRenderer.invoke('platform:jobs', projectId),
+  platformJobKinds: (): Promise<string[]> => ipcRenderer.invoke('platform:jobKinds'),
+  platformCreateJob: (input: PlatformJobCreate): Promise<PlatformJob> => ipcRenderer.invoke('platform:createJob', input),
+  platformCancelJob: (jobId: string): Promise<PlatformJob> => ipcRenderer.invoke('platform:cancelJob', jobId),
+  platformJobEvents: (jobId: string): Promise<PlatformJobEvent[]> => ipcRenderer.invoke('platform:jobEvents', jobId),
+  platformJobArtifacts: (jobId: string): Promise<PlatformJobArtifact[]> => ipcRenderer.invoke('platform:jobArtifacts', jobId),
+  platformDownloadJobArtifact: (jobId: string, artifact: PlatformJobArtifact): Promise<string> => ipcRenderer.invoke('platform:downloadJobArtifact', jobId, artifact),
   getCredential: () => ipcRenderer.invoke('credential:get'),
   setCredential: (key: string) => ipcRenderer.invoke('credential:set', key),
   envStatus: () => ipcRenderer.invoke('env:status'),

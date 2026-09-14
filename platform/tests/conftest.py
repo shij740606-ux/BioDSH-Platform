@@ -1,5 +1,7 @@
 import os
+import shutil
 from collections.abc import Callable, Generator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +14,7 @@ os.environ["BIODSH_AUTO_CREATE_SCHEMA"] = "true"
 os.environ["BIODSH_ENVIRONMENT"] = "test"
 os.environ["BIODSH_LOGIN_MAX_ATTEMPTS"] = "3"
 os.environ["BIODSH_LOGIN_LOCK_MINUTES"] = "1"
+os.environ["BIODSH_ARTIFACT_ROOT"] = "./test-biodsh-artifacts"
 
 from biodsh_platform.db import engine  # noqa: E402
 from biodsh_platform.main import create_app  # noqa: E402
@@ -20,10 +23,13 @@ from biodsh_platform.models import Base  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def clean_database() -> Generator[None, None, None]:
+    artifact_root = Path("./test-biodsh-artifacts")
+    shutil.rmtree(artifact_root, ignore_errors=True)
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+    shutil.rmtree(artifact_root, ignore_errors=True)
 
 
 @pytest.fixture

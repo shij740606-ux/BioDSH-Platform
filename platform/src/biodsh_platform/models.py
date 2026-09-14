@@ -191,7 +191,11 @@ class NodeMetric(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
-    __table_args__ = (Index("ix_jobs_project_status", "project_id", "status"),)
+    __table_args__ = (
+        Index("ix_jobs_project_status", "project_id", "status"),
+        Index("ix_jobs_status_priority_created", "status", "priority", "created_at"),
+        Index("ix_jobs_lease_expires", "lease_expires_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(
@@ -202,6 +206,15 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(24), default=JobStatus.QUEUED)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     requested_resources: Mapped[dict] = mapped_column(JSON, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    result_manifest: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_message: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str] = mapped_column(String(120), default="platform")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -211,6 +224,9 @@ class Job(Base):
     node: Mapped[ComputeNode | None] = relationship(back_populates="jobs")
     events: Mapped[list["JobEvent"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="JobEvent.sequence"
+    )
+    artifacts: Mapped[list["JobArtifact"]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
     )
 
 
@@ -226,3 +242,22 @@ class JobEvent(Base):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     job: Mapped[Job] = relationship(back_populates="events")
+
+
+class JobArtifact(Base):
+    __tablename__ = "job_artifacts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "relative_path", name="uq_job_artifacts_job_path"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    relative_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(700), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(160), default="application/octet-stream")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    job: Mapped[Job] = relationship(back_populates="artifacts")

@@ -304,3 +304,160 @@ def test_node_registration_uses_bootstrap_token_and_listing_requires_admin(
         stored_node = db.get(ComputeNode, node["id"])
         assert stored_node.token_hash != rotated["node_token"]
         assert db.scalar(select(NodeMetric).where(NodeMetric.node_id == node["id"])) is not None
+
+
+def test_worker_claim_resource_matching_logs_cancel_and_artifacts(
+    client: TestClient,
+    bootstrap_headers: dict[str, str],
+    user_factory: Callable,
+) -> None:
+    _, owner_headers = user_factory("job-owner")
+    _, outsider_headers = user_factory("job-outsider")
+    project = client.post(
+        "/api/v1/projects",
+        headers=owner_headers,
+        json={"name": "Execution", "description": "worker lifecycle"},
+    ).json()
+    impossible = client.post(
+        "/api/v1/jobs",
+        headers=owner_headers,
+        json={
+            "project_id": project["id"],
+            "kind": "test-command",
+            "payload": {"arguments": ["--large"]},
+            "requested_resources": {"gpu_count": 2},
+            "priority": 100,
+        },
+    )
+    assert impossible.status_code == 201
+    runnable = client.post(
+        "/api/v1/jobs",
+        headers=owner_headers,
+        json={
+            "project_id": project["id"],
+            "kind": "test-command",
+            "payload": {"arguments": ["--input", "sample.txt"]},
+            "requested_resources": {"cpu": 2, "memory_bytes": 1024},
+            "priority": 5,
+        },
+    )
+    assert runnable.status_code == 201
+    enrollment = client.post(
+        "/api/v1/nodes/register",
+        headers=bootstrap_headers,
+        json={
+            "name": "executor-01",
+            "hostname": "executor-01",
+            "operating_system": "Linux",
+            "agent_version": "0.1.0",
+            "capabilities": {"cpu_logical": 4},
+        },
+    ).json()
+    node = enrollment["node"]
+    node_headers = {
+        "X-BioDSH-Node-ID": node["id"],
+        "X-BioDSH-Node-Token": enrollment["node_token"],
+    }
+    heartbeat = {
+        "capabilities": {"cpu_logical": 4, "executors": ["test-command"]},
+        "metric": {
+            "cpu_percent": 10,
+            "load_one": 0.5,
+            "memory_used_bytes": 1000,
+            "memory_total_bytes": 10000,
+            "memory_percent": 10,
+            "disk_used_bytes": 1000,
+            "disk_total_bytes": 10000,
+            "disk_percent": 10,
+            "network_rx_bytes": 1,
+            "network_tx_bytes": 2,
+            "running_jobs": 0,
+            "gpus": [{"index": 0, "memory_used_mib": 0, "memory_total_mib": 1000}],
+        },
+    }
+    assert (
+        client.post(
+            f"/api/v1/nodes/{node['id']}/heartbeat", headers=node_headers, json=heartbeat
+        ).status_code
+        == 200
+    )
+    assert client.get("/api/v1/job-kinds", headers=owner_headers).json() == ["test-command"]
+    assert (
+        client.post(
+            f"/api/v1/nodes/{node['id']}/jobs/claim",
+            headers=node_headers,
+            json={"supported_kinds": ["unadvertised-command"]},
+        ).status_code
+        == 422
+    )
+    claimed = client.post(
+        f"/api/v1/nodes/{node['id']}/jobs/claim",
+        headers=node_headers,
+        json={"supported_kinds": ["test-command"]},
+    )
+    assert claimed.status_code == 200
+    job = claimed.json()
+    assert job["id"] == runnable.json()["id"]
+    assert job["status"] == "assigned"
+    assert job["attempt"] == 1
+    assert (
+        client.post(
+            f"/api/v1/nodes/not-this-node/jobs/{job['id']}/start", headers=node_headers
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            f"/api/v1/nodes/{node['id']}/jobs/{job['id']}/start", headers=node_headers
+        ).json()["status"]
+        == "running"
+    )
+    event = client.post(
+        f"/api/v1/nodes/{node['id']}/jobs/{job['id']}/events",
+        headers=node_headers,
+        json={"kind": "log", "message": "processing sample", "payload": {}},
+    )
+    assert event.status_code == 200
+    assert event.json()["message"] == "processing sample"
+    control_url = f"/api/v1/nodes/{node['id']}/jobs/{job['id']}/control"
+    assert client.post(control_url, headers=node_headers).json()["cancel_requested"] is False
+    assert (
+        client.post(f"/api/v1/jobs/{job['id']}/cancel", headers=owner_headers).json()["status"]
+        == "cancelling"
+    )
+    assert client.post(control_url, headers=node_headers).json()["cancel_requested"] is True
+    artifact = client.put(
+        f"/api/v1/nodes/{node['id']}/jobs/{job['id']}/artifacts/results/summary.txt",
+        headers={**node_headers, "Content-Type": "text/plain"},
+        content=b"completed output\n",
+    )
+    assert artifact.status_code == 200
+    completed = client.post(
+        f"/api/v1/nodes/{node['id']}/jobs/{job['id']}/complete",
+        headers=node_headers,
+        json={
+            "status": "succeeded",
+            "exit_code": -15,
+            "error_message": "process exited with code -15",
+            "result_manifest": {"artifacts": [artifact.json()]},
+        },
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "cancelled"
+    artifacts = client.get(f"/api/v1/jobs/{job['id']}/artifacts", headers=owner_headers).json()
+    assert artifacts[0]["sha256"] == artifact.json()["sha256"]
+    download = client.get(
+        f"/api/v1/jobs/{job['id']}/artifacts/{artifacts[0]['id']}", headers=owner_headers
+    )
+    assert download.content == b"completed output\n"
+    assert (
+        client.get(f"/api/v1/jobs/{job['id']}/artifacts", headers=outsider_headers).status_code
+        == 404
+    )
+    no_match = client.post(
+        f"/api/v1/nodes/{node['id']}/jobs/claim",
+        headers=node_headers,
+        json={"supported_kinds": ["test-command"]},
+    )
+    assert no_match.status_code == 200
+    assert no_match.json() is None

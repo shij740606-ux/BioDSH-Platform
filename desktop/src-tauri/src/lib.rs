@@ -278,6 +278,39 @@ fn platform_update_node(state: State<'_, AppState>, node_id: String, status: Str
     platform_auth::update_node(&state.settings.lock().unwrap().platform_url, &node_id, &status)
 }
 #[tauri::command]
+fn platform_jobs(state: State<'_, AppState>, project_id: String) -> Result<serde_json::Value, String> {
+    platform_auth::jobs(&state.settings.lock().unwrap().platform_url, &project_id)
+}
+#[tauri::command]
+fn platform_job_kinds(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    platform_auth::job_kinds(&state.settings.lock().unwrap().platform_url)
+}
+#[tauri::command]
+fn platform_create_job(state: State<'_, AppState>, input: serde_json::Value) -> Result<serde_json::Value, String> {
+    platform_auth::create_job(&state.settings.lock().unwrap().platform_url, input)
+}
+#[tauri::command]
+fn platform_cancel_job(state: State<'_, AppState>, job_id: String) -> Result<serde_json::Value, String> {
+    platform_auth::cancel_job(&state.settings.lock().unwrap().platform_url, &job_id)
+}
+#[tauri::command]
+fn platform_job_events(state: State<'_, AppState>, job_id: String) -> Result<serde_json::Value, String> {
+    platform_auth::job_events(&state.settings.lock().unwrap().platform_url, &job_id)
+}
+#[tauri::command]
+fn platform_job_artifacts(state: State<'_, AppState>, job_id: String) -> Result<serde_json::Value, String> {
+    platform_auth::job_artifacts(&state.settings.lock().unwrap().platform_url, &job_id)
+}
+#[tauri::command]
+fn platform_download_job_artifact(state: State<'_, AppState>, job_id: String, artifact_id: String, relative_path: String) -> Result<String, String> {
+    if !job_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { return Err("任务编号无效".into()); }
+    let relative = std::path::Path::new(&relative_path);
+    if relative.components().any(|part| !matches!(part, std::path::Component::Normal(_))) { return Err("结果文件名无效".into()); }
+    let target = state.paths.root.join("results").join(&job_id).join(relative);
+    platform_auth::download_job_artifact(&state.settings.lock().unwrap().platform_url, &job_id, &artifact_id, &target)?;
+    Ok(target.to_string_lossy().into_owned())
+}
+#[tauri::command]
 async fn credential_set(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<CredentialStatus, String> {
     write_credential(&state.paths, &key);
     // 让新 key 立刻生效：重启 dsh（key 通过环境变量注入）
@@ -705,7 +738,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node,
+            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
             skills_catalog, skills_statuses, skills_readme, skills_install, skills_uninstall,
             open_path, open_external, pick_folder, window_control, client_log, deepseek_balance, git_status, git_init, git_commit, dsh_rpc, dsh_open_session, dsh_new_session, check_updates, assistant_ask, session_export, workspace_files, read_workspace_image, ratings_get, ratings_set, session_delete, env_install_extra, migrate_scan, migrate_import, refdata_list, refdata_install, refdata_remove, demos_seed, dsh_set_context

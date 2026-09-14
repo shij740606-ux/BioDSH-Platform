@@ -35,6 +35,7 @@ sudo mkdir -p /opt/biodsh-worker /etc/biodsh /var/lib/biodsh
 sudo python3 -m venv /opt/biodsh-worker/.venv
 sudo /opt/biodsh-worker/.venv/bin/pip install /path/to/BioDSH/platform
 sudo cp deploy/linux/worker.env.example /etc/biodsh/worker.env
+sudo cp deploy/linux/executors.example.json /etc/biodsh/executors.json
 sudo chown root:biodsh /etc/biodsh/worker.env
 sudo chmod 640 /etc/biodsh/worker.env
 sudo chown -R biodsh:biodsh /var/lib/biodsh
@@ -65,6 +66,24 @@ sudo systemctl status biodsh-worker
 
 生产环境应使用正式软件包安装流程替代仓库路径，并由部署系统注入环境文件。服务模板默认限制系统写权限，仅允许写入 `/var/lib/biodsh`。
 
+## 任务执行器
+
+`/etc/biodsh/executors.json` 是服务器本地的任务类型白名单。每个任务类型配置固定命令、固定环境变量、最长运行时间、最大参数数量和结果文件匹配规则。新增生信流程时增加执行器配置或部署新的流程包，不修改桌面端，也不把服务器路径写进数据库。
+
+Worker 使用参数数组直接创建子进程，不调用 Shell。每次运行使用 `/var/lib/biodsh/jobs/<任务ID>/attempt-<次数>` 独立目录，清理继承环境，并创建独立进程组。取消任务时先发送终止信号，超过宽限期后强制结束整个进程组。
+
+任务处理顺序如下：
+
+1. 桌面端把任务类型、参数数组和 CPU、内存、磁盘、GPU 需求提交给 Platform。
+2. Worker 上报本机执行器类型和实时资源，然后主动领取可运行的最高优先级任务。
+3. Platform 使用条件更新完成原子领取，并签发短期执行租约；资源不足的节点不会领取任务。
+4. Worker 运行期间续租、上报资源并把标准输出写入顺序化事件流。桌面端每两秒刷新日志。
+5. 用户取消后，Platform 把任务置为取消中；Worker 在下一次控制轮询中终止进程。
+6. Worker 按 `result_globs` 流式上传结果。Platform 校验大小、计算 SHA-256 并保存产物记录。
+7. 桌面端列出产物，并通过用户权限认证下载到本地 `BioDSH/results/<任务ID>`。
+
+如果领取后尚未启动便失去租约，任务会重新排队；如果运行中的任务失去租约，Platform 将其标记为 `unknown`，防止自动重复执行产生两份结果。管理员确认远端进程状态后再决定是否重试。
+
 ## 资源可视化数据
 
 Worker 默认每 10 秒采集并上报：
@@ -82,4 +101,4 @@ Platform 将数据写入 `node_metrics` 时序表，默认保留 7 天。节点�
 
 ## 当前边界与下一步
 
-本阶段完成的是服务器接入、独立认证、在线状态、资源采集、历史查询和桌面可视化。Worker 暂不执行分析任务，`running_jobs` 当前为 0。下一步应基于同一个 Worker 增加任务领取、资源匹配、受控子进程、日志上传、取消和结果登记；无需改变桌面端到 Platform 的一对多连接模型。
+服务器连接、资源监控、任务领取、资源匹配、受控子进程、实时日志、取消、执行租约、结果上传和桌面下载已经进入代码。执行器模板只是接入协议示例；正式上线前仍需为每种生信流程提供版本化的输入 Schema、容器或锁定环境、小数据集验收和失败恢复测试。

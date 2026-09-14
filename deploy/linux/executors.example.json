@@ -1,0 +1,14 @@
+{
+  "scrna-qc": {
+    "command": [
+      "/opt/biodsh-workflows/scrna-qc/.venv/bin/python",
+      "/opt/biodsh-workflows/scrna-qc/run.py"
+    ],
+    "environment": {
+      "PYTHONUNBUFFERED": "1"
+    },
+    "max_arguments": 100,
+    "timeout_seconds": 86400,
+    "result_globs": ["results/**/*", "*.json"]
+  }
+}

@@ -109,7 +109,7 @@ npm run tauri build
 
 ## 多用户与多服务器平台开发
 
-平台化改造正在 `feature/platform-foundation` 分支推进。当前仍采用 FastAPI 单体服务、PostgreSQL 和轻量计算节点架构；已加入账号登录、可撤销令牌、四级项目权限、审计记录、桌面安全凭据存储，以及一对多计算服务器接入和资源监控。正式发布前还需通过 staging PostgreSQL 与签名 Windows 安装包验收。开发路线见 [`docs/platform-development-plan.zh.md`](docs/platform-development-plan.zh.md)，服务器接入见 [`docs/server-worker.zh.md`](docs/server-worker.zh.md)，后端启动方式见 [`platform/README.md`](platform/README.md)。
+平台化改造正在 `feature/platform-foundation` 分支推进。当前仍采用 FastAPI 单体服务、PostgreSQL 和轻量计算节点架构；已加入账号登录、可撤销令牌、四级项目权限、审计记录、桌面安全凭据存储，以及一对多计算服务器接入、资源监控、任务领取、受控运行、实时日志、取消和结果回传。正式发布前还需通过 staging PostgreSQL、正式生信执行器与签名 Windows 安装包验收。开发路线见 [`docs/platform-development-plan.zh.md`](docs/platform-development-plan.zh.md)，服务器接入和执行见 [`docs/server-worker.zh.md`](docs/server-worker.zh.md)，后端启动方式见 [`platform/README.md`](platform/README.md)。
 
 ## 许可
 
