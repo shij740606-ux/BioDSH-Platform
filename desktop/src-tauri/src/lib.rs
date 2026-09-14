@@ -8,6 +8,7 @@ mod files;
 mod git;
 mod migrate;
 mod paths;
+mod platform_auth;
 mod pyenv;
 mod settings;
 mod skills;
@@ -224,9 +225,9 @@ fn settings_set(app: AppHandle, state: State<'_, AppState>, patch: serde_json::V
             match setter { 0 => s.mode = v.into(), 1 => s.offline_base_url = v.into(), 2 => s.offline_model = v.into(), 3 => s.offline_api_key = v.into(), _ => s.remote_dsh_url = v.into() }
         }
     }
-    for (k, setter) in [("platformUrl", 0), ("platformToken", 1), ("currentProjectId", 2)] {
+    for (k, setter) in [("platformUrl", 0), ("currentProjectId", 1)] {
         if let Some(v) = patch.get(k).and_then(|x| x.as_str()) {
-            match setter { 0 => s.platform_url = v.trim().into(), 1 => s.platform_token = v.trim().into(), _ => s.current_project_id = v.trim().into() }
+            match setter { 0 => s.platform_url = v.trim().into(), _ => s.current_project_id = v.trim().into() }
         }
     }
     for (k, setter) in [("imageBaseUrl", 0), ("imageModel", 1), ("imageApiKey", 2)] {
@@ -253,33 +254,16 @@ fn settings_set(app: AppHandle, state: State<'_, AppState>, patch: serde_json::V
 #[tauri::command]
 fn credential_get(state: State<'_, AppState>) -> CredentialStatus { read_credential(&state.paths) }
 #[tauri::command]
-fn platform_check(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let st = state.settings.lock().unwrap().clone();
-    let base = st.platform_url.trim().trim_end_matches('/');
-    if base.is_empty() { return Err("请先填写平台地址".into()); }
-    let metadata_response = ureq::get(&format!("{base}/.well-known/biodsh-platform"))
-        .timeout(std::time::Duration::from_secs(15))
-        .call()
-        .map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("平台发现失败：HTTP {code}"),
-            other => other.to_string(),
-        })?;
-    let metadata_body = metadata_response.into_string().map_err(|e| e.to_string())?;
-    let metadata: serde_json::Value = serde_json::from_str(&metadata_body)
-        .map_err(|e| format!("平台发现响应无效：{e}"))?;
-    let api_path = metadata.pointer("/api_versions/v1").and_then(|v| v.as_str())
-        .filter(|v| v.starts_with('/'))
-        .ok_or_else(|| "平台没有提供兼容的 v1 API".to_string())?;
-    let response = ureq::get(&format!("{base}{api_path}/status"))
-        .set("Authorization", &format!("Bearer {}", st.platform_token))
-        .timeout(std::time::Duration::from_secs(15))
-        .call()
-        .map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("平台连接失败：HTTP {code}"),
-            other => other.to_string(),
-        })?;
-    let body = response.into_string().map_err(|e| e.to_string())?;
-    serde_json::from_str(&body).map_err(|e| format!("平台响应无效：{e}"))
+fn platform_session(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    platform_auth::status(&state.settings.lock().unwrap().platform_url)
+}
+#[tauri::command]
+fn platform_login(state: State<'_, AppState>, username: String, password: String) -> Result<serde_json::Value, String> {
+    platform_auth::login(&state.settings.lock().unwrap().platform_url, &username, &password)
+}
+#[tauri::command]
+fn platform_logout(state: State<'_, AppState>) -> serde_json::Value {
+    platform_auth::logout(&state.settings.lock().unwrap().platform_url)
 }
 #[tauri::command]
 async fn credential_set(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<CredentialStatus, String> {
@@ -709,7 +693,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, settings_get, settings_set, credential_get, credential_set, platform_check,
+            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
             skills_catalog, skills_statuses, skills_readme, skills_install, skills_uninstall,
             open_path, open_external, pick_folder, window_control, client_log, deepseek_balance, git_status, git_init, git_commit, dsh_rpc, dsh_open_session, dsh_new_session, check_updates, assistant_ask, session_export, workspace_files, read_workspace_image, ratings_get, ratings_set, session_delete, env_install_extra, migrate_scan, migrate_import, refdata_list, refdata_install, refdata_remove, demos_seed, dsh_set_context

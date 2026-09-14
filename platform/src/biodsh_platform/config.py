@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     database_pool_recycle: int = Field(default=1800, ge=60)
 
     platform_token: SecretStr
+    jwt_secret: SecretStr
+    jwt_issuer: str = "biodsh-platform"
+    jwt_audience: str = "biodsh-desktop"
+    access_token_minutes: int = Field(default=15, ge=5, le=60)
+    refresh_token_days: int = Field(default=30, ge=1, le=90)
+    login_max_attempts: int = Field(default=5, ge=3, le=20)
+    login_lock_minutes: int = Field(default=15, ge=1, le=1440)
     auto_create_schema: bool = False
     cors_origins: list[str] = Field(default_factory=list)
 
@@ -42,8 +49,11 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_environment_contract(self) -> "Settings":
         token = self.platform_token.get_secret_value()
+        jwt_secret = self.jwt_secret.get_secret_value()
         if len(token) < 16:
             raise ValueError("platform_token must contain at least 16 characters")
+        if len(jwt_secret) < 32:
+            raise ValueError("jwt_secret must contain at least 32 characters")
         if self.environment in {"staging", "production"}:
             if self.database_url.startswith("sqlite"):
                 raise ValueError("staging and production require PostgreSQL")

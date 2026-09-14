@@ -5,7 +5,9 @@ description = "BioDSH control plane for projects, compute nodes, jobs, and execu
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.14,<2",
+  "argon2-cffi>=23.1,<26",
   "fastapi>=0.115,<1",
+  "PyJWT>=2.10,<3",
   "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy>=2.0,<3",

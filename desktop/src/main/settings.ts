@@ -2,17 +2,23 @@ import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import type { AppSettings, AppPaths, CredentialStatus } from '../shared/types';
 
-const DEFAULTS: AppSettings = { useChinaMirror: true, workspace: '', onboarded: false, theme: 'system', language: 'system', mode: 'online', offlineBaseUrl: '', offlineModel: '', offlineApiKey: '', remoteDshUrl: '', platformUrl: '', platformToken: '', currentProjectId: '', imageBaseUrl: '', imageApiKey: '', imageModel: '', mcpServers: [], demosSeeded: false };
+const DEFAULTS: AppSettings = { useChinaMirror: true, workspace: '', onboarded: false, theme: 'system', language: 'system', mode: 'online', offlineBaseUrl: '', offlineModel: '', offlineApiKey: '', remoteDshUrl: '', platformUrl: '', currentProjectId: '', imageBaseUrl: '', imageApiKey: '', imageModel: '', mcpServers: [], demosSeeded: false };
 
 export function loadSettings(p: AppPaths): AppSettings {
   const f = path.join(p.root, 'settings.json');
   let s: Partial<AppSettings> = {};
   if (existsSync(f)) { try { s = JSON.parse(readFileSync(f, 'utf8')); } catch { /* 损坏则用默认 */ } }
-  return { ...DEFAULTS, workspace: p.workspace, ...s };
+  const hadLegacyPlatformToken = 'platformToken' in s;
+  delete (s as Record<string, unknown>).platformToken;
+  const settings = { ...DEFAULTS, workspace: p.workspace, ...s };
+  if (hadLegacyPlatformToken) saveSettings(p, settings);
+  return settings;
 }
 
 export function saveSettings(p: AppPaths, s: AppSettings): void {
-  writeFileSync(path.join(p.root, 'settings.json'), JSON.stringify(s, null, 2));
+  const safe = { ...s } as Record<string, unknown>;
+  delete safe.platformToken;
+  writeFileSync(path.join(p.root, 'settings.json'), JSON.stringify(safe, null, 2));
 }
 
 // dsh 的凭据文件：$DSH_HOME/.credentials.yaml。dsh ≥0.1.1 要求版本化布局（version: 1 / refs:），扁平布局会让 dsh 启动失败。

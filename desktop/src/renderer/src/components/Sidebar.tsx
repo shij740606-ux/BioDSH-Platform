@@ -24,7 +24,7 @@ const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1
 const loadPins = (): string[] => { try { return JSON.parse(localStorage.getItem('biodsh.pins') ?? '[]'); } catch { return []; } };
 
 export default function Sidebar() {
-  const { tab, setTab, env, dsh, info, settings, currentSession: current, setCurrentSession: setCurrent } = useApp();
+  const { tab, setTab, env, dsh, info, settings, platform, platformLogout, updateSettings, currentSession: current, setCurrentSession: setCurrent } = useApp();
   const offline = settings?.mode === 'offline';
   const { t, lang } = useT();
   const api = window.biodsh;
@@ -206,6 +206,14 @@ export default function Sidebar() {
       </div>
 
       <div className="px-3 pb-3 pt-2 hairline-t flex flex-col gap-1.5 relative">
+        {platform.authenticated && <div className="px-2 py-2 rounded-lg flex flex-col gap-1.5" style={{ background: 'var(--fill)' }}>
+          <div className="flex items-center gap-2"><span className="t-body flex-1 truncate">{platform.user?.username}</span><button className="t-caption" onClick={() => void platformLogout()}>{t('退出')}</button></div>
+          <select className="field !h-[30px] !py-0 t-caption" value={settings?.currentProjectId ?? ''} onChange={(e) => void updateSettings({ currentProjectId: e.target.value })}>
+            <option value="">{t('选择平台项目')}</option>
+            {platform.projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {t(p.role)}</option>)}
+          </select>
+          {platform.projects.find((p) => p.id === settings?.currentProjectId)?.role === 'viewer' && <span className="t-caption" style={{ color: 'var(--orange)' }}>{t('当前项目为只读权限')}</span>}
+        </div>}
         <button className="flex items-center gap-2 px-2 h-[30px] rounded-lg text-left hover:brightness-95" style={{ background: 'var(--fill)' }} onClick={() => setUsageOpen((v) => !v)} title={t('点击查看用量明细')}>
           <Wallet size={14} style={{ color: 'var(--accent)' }} />
           <span className="t-body flex-1">{offline ? t('纯离线模式') : balance?.total != null ? t('余额 {amount}', { amount: `${balance.currency === 'CNY' ? '¥' : '$'}${Number(balance.total).toFixed(2)}` }) : balance?.error ?? t('查询余额…')}</span>

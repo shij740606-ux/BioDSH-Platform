@@ -8,6 +8,7 @@ import DatabaseView from './views/DatabaseView';
 import EnvView from './views/EnvView';
 import SettingsView from './views/SettingsView';
 import Onboarding from './views/Onboarding';
+import LoginView from './views/LoginView';
 import AskPopover from './components/AskPopover';
 import AutoUpdate from './components/AutoUpdate';
 import StarPrompt from './components/StarPrompt';
@@ -26,8 +27,9 @@ function useTheme() {
 
 function Shell() {
   useTheme();
-  const { ready, settings, tab } = useApp();
+  const { ready, settings, platform, tab } = useApp();
   if (!ready || !settings) return <div className="h-full w-full drag" />;
+  if (settings.platformUrl && !platform.authenticated) return <LoginView />;
   return (
     <LangContext.Provider value={resolveLang(settings.language)}>
     <div className="h-full w-full flex">

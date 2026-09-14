@@ -24,8 +24,6 @@ pub struct AppSettings {
     #[serde(default)]
     pub platform_url: String,
     #[serde(default)]
-    pub platform_token: String,
-    #[serde(default)]
     pub current_project_id: String,
     /// 图像生成（OpenAI 兼容 images 接口）：智谱 CogView / OpenAI / SiliconFlow / 通义万相
     #[serde(default)]
@@ -67,9 +65,11 @@ fn default_mode() -> String { "online".into() }
 impl AppSettings {
     pub fn load(p: &AppPaths) -> AppSettings {
         let f = p.root.join("settings.json");
-        let mut s = AppSettings { use_china_mirror: true, workspace: p.workspace.to_string_lossy().into(), onboarded: false, theme: "system".into(), language: "system".into(), mode: "online".into(), offline_base_url: String::new(), offline_model: String::new(), offline_api_key: String::new(), remote_dsh_url: String::new(), platform_url: String::new(), platform_token: String::new(), current_project_id: String::new(), image_base_url: String::new(), image_api_key: String::new(), image_model: String::new(), mcp_servers: Vec::new(), demos_seeded: false };
+        let mut s = AppSettings { use_china_mirror: true, workspace: p.workspace.to_string_lossy().into(), onboarded: false, theme: "system".into(), language: "system".into(), mode: "online".into(), offline_base_url: String::new(), offline_model: String::new(), offline_api_key: String::new(), remote_dsh_url: String::new(), platform_url: String::new(), current_project_id: String::new(), image_base_url: String::new(), image_api_key: String::new(), image_model: String::new(), mcp_servers: Vec::new(), demos_seeded: false };
+        let mut had_legacy_platform_token = false;
         if let Ok(txt) = fs::read_to_string(&f) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+                had_legacy_platform_token = v.get("platformToken").is_some();
                 if let Some(b) = v.get("useChinaMirror").and_then(|x| x.as_bool()) { s.use_china_mirror = b; }
                 if let Some(w) = v.get("workspace").and_then(|x| x.as_str()) { if !w.is_empty() { s.workspace = w.into(); } }
                 if let Some(b) = v.get("onboarded").and_then(|x| x.as_bool()) { s.onboarded = b; }
@@ -81,9 +81,9 @@ impl AppSettings {
                         match field { 0 => s.offline_base_url = val.into(), 1 => s.offline_model = val.into(), 2 => s.offline_api_key = val.into(), _ => s.remote_dsh_url = val.into() }
                     }
                 }
-                for (k, field) in [("platformUrl", 0), ("platformToken", 1), ("currentProjectId", 2)] {
+                for (k, field) in [("platformUrl", 0), ("currentProjectId", 1)] {
                     if let Some(val) = v.get(k).and_then(|x| x.as_str()) {
-                        match field { 0 => s.platform_url = val.into(), 1 => s.platform_token = val.into(), _ => s.current_project_id = val.into() }
+                        match field { 0 => s.platform_url = val.into(), _ => s.current_project_id = val.into() }
                     }
                 }
                 for (k, field) in [("imageBaseUrl", 0), ("imageModel", 1), ("imageApiKey", 2)] {
@@ -95,6 +95,7 @@ impl AppSettings {
                 if let Some(b) = v.get("demosSeeded").and_then(|x| x.as_bool()) { s.demos_seeded = b; }
             }
         }
+        if had_legacy_platform_token { s.save(p); }
         s
     }
     pub fn save(&self, p: &AppPaths) {

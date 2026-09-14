@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { DshManager, setDshTheme, setDshLocale, setDshLlmOverride } from './dsh';
 import { PyEnvManager } from './pyenv';
 import { SkillStore } from './skills';
+import { PlatformAuth } from './platform-auth';
 import type { AppSettings, IpcEvent, Rect } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +22,7 @@ let dshBounds: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
 const paths = appPaths();
 let settings = loadSettings(paths);
+const platformAuth = new PlatformAuth(paths, () => settings.platformUrl);
 const broadcast = (e: IpcEvent) => win?.webContents.send('event', e);
 const dsh = new DshManager(paths, (status) => broadcast({ type: 'dsh', status }));
 const pyenv = new PyEnvManager(paths, (status) => broadcast({ type: 'env', status }));
@@ -145,20 +147,9 @@ function registerIpc() {
     if (themeChanged || langChanged) { setDshTheme(paths, settings.theme); dshView?.webContents.reload(); }
     return settings;
   });
-  ipcMain.handle('platform:check', async () => {
-    const base = settings.platformUrl?.trim().replace(/\/$/, '');
-    if (!base) throw new Error('请先填写平台地址');
-    const metadataResponse = await fetch(`${base}/.well-known/biodsh-platform`);
-    if (!metadataResponse.ok) throw new Error(`平台发现失败：HTTP ${metadataResponse.status}`);
-    const metadata = await metadataResponse.json() as { api_versions?: { v1?: string } };
-    const apiPath = metadata.api_versions?.v1;
-    if (!apiPath || !apiPath.startsWith('/')) throw new Error('平台没有提供兼容的 v1 API');
-    const response = await fetch(`${base}${apiPath}/status`, {
-      headers: { Authorization: `Bearer ${settings.platformToken ?? ''}` },
-    });
-    if (!response.ok) throw new Error(`平台连接失败：HTTP ${response.status}`);
-    return response.json();
-  });
+  ipcMain.handle('platform:session', () => platformAuth.status());
+  ipcMain.handle('platform:login', (_e, username: string, password: string) => platformAuth.login(username, password));
+  ipcMain.handle('platform:logout', () => platformAuth.logout());
   ipcMain.handle('credential:get', () => readCredential(paths));
   ipcMain.handle('credential:set', async (_e, key: string) => { writeCredential(paths, key); if (dsh.status.state !== 'stopped') { const s = await dsh.restart(settings.workspace || paths.workspace); if (s.state === 'running' && s.url) ensureDshView(s.url); } return readCredential(paths); });
   const openSession = (id: string) => dshView?.webContents.executeJavaScript(`try { localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: ${JSON.stringify(id)} })); } catch (e) {} location.reload();`);

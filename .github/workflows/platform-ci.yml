@@ -23,6 +23,11 @@ permissions:
 jobs:
   platform:
     runs-on: ubuntu-latest
+    env:
+      BIODSH_DATABASE_URL: sqlite:///./ci-platform.db
+      BIODSH_PLATFORM_TOKEN: ci-platform-bootstrap-token
+      BIODSH_JWT_SECRET: ci-jwt-secret-that-is-at-least-thirty-two-characters
+      BIODSH_ENVIRONMENT: test
     defaults:
       run:
         working-directory: platform
@@ -41,6 +46,11 @@ jobs:
           git diff --exit-code -- requirements.txt
       - name: Lint
         run: uv run ruff check .
+      - name: Verify migrations
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head
       - name: Test
         run: uv run pytest -q
 
@@ -60,3 +70,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Type check
         run: npm run typecheck
+      - name: Build desktop web bundles
+        run: npm run build
+      - name: Check Tauri backend
+        working-directory: desktop/src-tauri
+        run: cargo check --locked

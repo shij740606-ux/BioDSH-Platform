@@ -71,8 +71,6 @@ export interface AppSettings {
   remoteDshUrl: string;
   /** BioDSH 统一平台地址；多用户和多服务器功能通过该入口访问 */
   platformUrl: string;
-  /** 第一步使用的平台访问令牌；第二步将替换为用户登录令牌 */
-  platformToken: string;
   /** 当前选中的平台项目 */
   currentProjectId: string;
   /** 图像生成：OpenAI 兼容 images 接口（智谱 CogView / OpenAI / SiliconFlow / 通义万相） */
@@ -89,6 +87,15 @@ export interface PlatformStatus {
   service: string;
   version: string;
   database: string;
+}
+
+export type PlatformRole = 'admin' | 'owner' | 'analyst' | 'viewer';
+export interface PlatformUser { id: string; username: string; isActive: boolean; isAdmin: boolean }
+export interface PlatformProject { id: string; name: string; description: string; role: PlatformRole }
+export interface PlatformSession {
+  authenticated: boolean;
+  user?: PlatformUser;
+  projects: PlatformProject[];
 }
 
 export interface McpServer {
