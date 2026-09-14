@@ -69,6 +69,12 @@ export interface AppSettings {
   offlineApiKey: string;
   /** 离线模式可选：连接已部署在 Linux 服务器上的 dsh（不在本机启动） */
   remoteDshUrl: string;
+  /** BioDSH 统一平台地址；多用户和多服务器功能通过该入口访问 */
+  platformUrl: string;
+  /** 第一步使用的平台访问令牌；第二步将替换为用户登录令牌 */
+  platformToken: string;
+  /** 当前选中的平台项目 */
+  currentProjectId: string;
   /** 图像生成：OpenAI 兼容 images 接口（智谱 CogView / OpenAI / SiliconFlow / 通义万相） */
   imageBaseUrl: string;
   imageApiKey: string;
@@ -76,6 +82,13 @@ export interface AppSettings {
   /** 外接 MCP 服务 */
   mcpServers: McpServer[];
   demosSeeded: boolean;
+}
+
+export interface PlatformStatus {
+  status: string;
+  service: string;
+  version: string;
+  database: string;
 }
 
 export interface McpServer {

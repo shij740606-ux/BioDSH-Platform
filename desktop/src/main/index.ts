@@ -145,6 +145,15 @@ function registerIpc() {
     if (themeChanged || langChanged) { setDshTheme(paths, settings.theme); dshView?.webContents.reload(); }
     return settings;
   });
+  ipcMain.handle('platform:check', async () => {
+    const base = settings.platformUrl?.trim().replace(/\/$/, '');
+    if (!base) throw new Error('请先填写平台地址');
+    const response = await fetch(`${base}/api/status`, {
+      headers: { Authorization: `Bearer ${settings.platformToken ?? ''}` },
+    });
+    if (!response.ok) throw new Error(`平台连接失败：HTTP ${response.status}`);
+    return response.json();
+  });
   ipcMain.handle('credential:get', () => readCredential(paths));
   ipcMain.handle('credential:set', async (_e, key: string) => { writeCredential(paths, key); if (dsh.status.state !== 'stopped') { const s = await dsh.restart(settings.workspace || paths.workspace); if (s.state === 'running' && s.url) ensureDshView(s.url); } return readCredential(paths); });
   const openSession = (id: string) => dshView?.webContents.executeJavaScript(`try { localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: ${JSON.stringify(id)} })); } catch (e) {} location.reload();`);

@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: biodsh
+      POSTGRES_USER: biodsh
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - biodsh-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biodsh -d biodsh"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  platform:
+    build:
+      context: ../platform
+    restart: unless-stopped
+    environment:
+      BIODSH_ENVIRONMENT: production
+      BIODSH_DATABASE_URL: postgresql+psycopg://biodsh:${POSTGRES_PASSWORD}@postgres:5432/biodsh
+      BIODSH_PLATFORM_TOKEN: ${BIODSH_PLATFORM_TOKEN:?set BIODSH_PLATFORM_TOKEN}
+      BIODSH_AUTO_CREATE_SCHEMA: "false"
+      BIODSH_CORS_ORIGINS: '["tauri://localhost"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  biodsh-postgres:

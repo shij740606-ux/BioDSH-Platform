@@ -104,6 +104,12 @@ npm run tauri build
 | `desktop/` | Tauri 桌面 App——React 界面（`src/`）、Rust 后端（`src-tauri/`）、构建脚本（`scripts/`）、商店目录（`store/`）。 |
 | `biodsh-core/skills/` | 随软件发布、经过评测的官方技能。 |
 | `desktop/resources/` | 打包进软件的资源：分析环境规格、示范项目会话、辅助脚本。 |
+| `platform/` | 多用户、多服务器改造的统一 Platform API、数据库模型、迁移与测试。 |
+| `deploy/` | PostgreSQL 和 Platform API 的部署配置。 |
+
+## 多用户与多服务器平台开发
+
+平台化改造正在 `feature/platform-foundation` 分支推进。第一阶段采用 FastAPI 单体服务、PostgreSQL 和轻量计算节点架构。开发与部署方案见 [`docs/platform-development-plan.zh.md`](docs/platform-development-plan.zh.md)，后端启动方式见 [`platform/README.md`](platform/README.md)。
 
 ## 许可
 

@@ -1,10 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo } from '../shared/types';
+import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformStatus } from '../shared/types';
 
 const api = {
   appInfo: () => ipcRenderer.invoke('app:info'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke('settings:set', patch),
+  platformCheck: (): Promise<PlatformStatus> => ipcRenderer.invoke('platform:check'),
   getCredential: () => ipcRenderer.invoke('credential:get'),
   setCredential: (key: string) => ipcRenderer.invoke('credential:set', key),
   envStatus: () => ipcRenderer.invoke('env:status'),

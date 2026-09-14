@@ -24,6 +24,26 @@ export default function SettingsView() {
   const offline = settings?.mode === 'offline';
   const [draft, setDraft] = useState<{ offlineBaseUrl?: string; offlineModel?: string; offlineApiKey?: string; remoteDshUrl?: string }>({});
   const saveOffline = async () => { await updateSettings(draft); setDraft({}); void restartDsh(); };
+  const [platformDraft, setPlatformDraft] = useState<{ platformUrl?: string; platformToken?: string; currentProjectId?: string }>({});
+  const [platformState, setPlatformState] = useState<'idle' | 'checking' | 'ok' | 'error'>('idle');
+  const [platformMessage, setPlatformMessage] = useState('');
+  const savePlatform = async () => {
+    if (Object.keys(platformDraft).length) await updateSettings(platformDraft);
+    setPlatformDraft({});
+  };
+  const testPlatform = async () => {
+    setPlatformState('checking');
+    setPlatformMessage('');
+    try {
+      await savePlatform();
+      const result = await window.biodsh.platformCheck();
+      setPlatformState('ok');
+      setPlatformMessage(`${result.service} ${result.version} · DB ${result.database}`);
+    } catch (error) {
+      setPlatformState('error');
+      setPlatformMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
   const [saved, setSaved] = useState(false);
   const [upd, setUpd] = useState<{ dsh: { current: string; latest: string; outdated: boolean } } | null | 'checking' | 'error'>(null);
   const checkUpd = async () => { setUpd('checking'); try { setUpd(await window.biodsh.checkUpdates() as { dsh: { current: string; latest: string; outdated: boolean } }); } catch { setUpd('error'); } };
@@ -61,6 +81,43 @@ export default function SettingsView() {
                 <div className="t-caption" style={{ color: 'var(--text-3)' }}>{t('以上均为 OpenAI 兼容接口；BioDSH 引擎(dsh)走 chat/completions 协议。Claude/Anthropic 原生协议暂不支持；非 DeepSeek 模型在 dsh 上的效果不保证。')}</div>
               </div>
             )}
+          </Section>
+
+          <Section title={t('BioDSH 平台')} desc={t('连接统一平台后，可以管理项目、计算节点和后台任务。第一阶段使用平台令牌，后续版本将改为用户登录。')}>
+            <div className="flex flex-col gap-2">
+              <label className="t-caption">{t('平台地址')}</label>
+              <input
+                className="field t-mono"
+                placeholder="http://127.0.0.1:8000"
+                value={platformDraft.platformUrl ?? settings.platformUrl ?? ''}
+                onChange={(e) => { setPlatformDraft((d) => ({ ...d, platformUrl: e.target.value })); setPlatformState('idle'); }}
+              />
+              <label className="t-caption">{t('平台访问令牌')}</label>
+              <input
+                className="field t-mono"
+                type="password"
+                placeholder={settings.platformToken ? t('已保存，输入新值可替换') : t('由平台管理员提供')}
+                value={platformDraft.platformToken ?? settings.platformToken ?? ''}
+                onChange={(e) => { setPlatformDraft((d) => ({ ...d, platformToken: e.target.value })); setPlatformState('idle'); }}
+              />
+              <label className="t-caption">{t('当前项目 ID（可选）')}</label>
+              <input
+                className="field t-mono"
+                placeholder={t('建立项目后自动选择')}
+                value={platformDraft.currentProjectId ?? settings.currentProjectId ?? ''}
+                onChange={(e) => setPlatformDraft((d) => ({ ...d, currentProjectId: e.target.value }))}
+              />
+              <div className="flex items-center gap-3 mt-1">
+                <button className="btn btn-primary" onClick={testPlatform} disabled={platformState === 'checking'}>
+                  {platformState === 'checking' ? t('正在检测…') : t('保存并检测连接')}
+                </button>
+                {platformMessage && (
+                  <span className="t-caption" style={{ color: platformState === 'ok' ? 'var(--green)' : 'var(--red)' }}>
+                    {platformState === 'ok' ? t('连接成功：') : t('连接失败：')}{platformMessage}
+                  </span>
+                )}
+              </div>
+            </div>
           </Section>
 
           <Section title={t('模型 API Key')} desc={t('DeepSeek 的密钥。保存在本机 dsh-home/.credentials.yaml，只用于调用模型。')}>

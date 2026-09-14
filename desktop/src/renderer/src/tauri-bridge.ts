@@ -9,6 +9,7 @@ export function installTauriBridge() {
     appInfo: () => invoke('app_info'),
     getSettings: () => invoke('settings_get'),
     setSettings: (patch: Partial<AppSettings>) => invoke('settings_set', { patch }),
+    platformCheck: () => invoke('platform_check'),
     getCredential: () => invoke('credential_get'),
     setCredential: (key: string) => invoke('credential_set', { key }),
     envStatus: () => invoke('env_status'),
