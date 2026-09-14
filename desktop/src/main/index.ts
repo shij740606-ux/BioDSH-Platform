@@ -148,7 +148,12 @@ function registerIpc() {
   ipcMain.handle('platform:check', async () => {
     const base = settings.platformUrl?.trim().replace(/\/$/, '');
     if (!base) throw new Error('请先填写平台地址');
-    const response = await fetch(`${base}/api/status`, {
+    const metadataResponse = await fetch(`${base}/.well-known/biodsh-platform`);
+    if (!metadataResponse.ok) throw new Error(`平台发现失败：HTTP ${metadataResponse.status}`);
+    const metadata = await metadataResponse.json() as { api_versions?: { v1?: string } };
+    const apiPath = metadata.api_versions?.v1;
+    if (!apiPath || !apiPath.startsWith('/')) throw new Error('平台没有提供兼容的 v1 API');
+    const response = await fetch(`${base}${apiPath}/status`, {
       headers: { Authorization: `Bearer ${settings.platformToken ?? ''}` },
     });
     if (!response.ok) throw new Error(`平台连接失败：HTTP ${response.status}`);

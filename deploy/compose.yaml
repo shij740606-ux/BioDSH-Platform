@@ -1,15 +1,15 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to a reviewed version}
     restart: unless-stopped
     environment:
-      POSTGRES_DB: biodsh
-      POSTGRES_USER: biodsh
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - biodsh-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U biodsh -d biodsh"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -20,15 +20,23 @@ services:
     restart: unless-stopped
     environment:
       BIODSH_ENVIRONMENT: production
-      BIODSH_DATABASE_URL: postgresql+psycopg://biodsh:${POSTGRES_PASSWORD}@postgres:5432/biodsh
+      BIODSH_SERVICE_NAME: ${BIODSH_SERVICE_NAME:?set BIODSH_SERVICE_NAME}
+      BIODSH_HOST: 0.0.0.0
+      BIODSH_PORT: ${BIODSH_CONTAINER_PORT:?set BIODSH_CONTAINER_PORT}
+      BIODSH_LOG_LEVEL: ${BIODSH_LOG_LEVEL:?set BIODSH_LOG_LEVEL}
+      BIODSH_API_PREFIX: ${BIODSH_API_PREFIX:?set BIODSH_API_PREFIX}
+      BIODSH_DOCS_ENABLED: ${BIODSH_DOCS_ENABLED:?set BIODSH_DOCS_ENABLED}
+      BIODSH_DATABASE_URL: ${BIODSH_DATABASE_URL:?set BIODSH_DATABASE_URL}
+      BIODSH_DATABASE_POOL_SIZE: ${BIODSH_DATABASE_POOL_SIZE:?set BIODSH_DATABASE_POOL_SIZE}
+      BIODSH_DATABASE_MAX_OVERFLOW: ${BIODSH_DATABASE_MAX_OVERFLOW:?set BIODSH_DATABASE_MAX_OVERFLOW}
       BIODSH_PLATFORM_TOKEN: ${BIODSH_PLATFORM_TOKEN:?set BIODSH_PLATFORM_TOKEN}
       BIODSH_AUTO_CREATE_SCHEMA: "false"
-      BIODSH_CORS_ORIGINS: '["tauri://localhost"]'
+      BIODSH_CORS_ORIGINS: ${BIODSH_CORS_ORIGINS:?set BIODSH_CORS_ORIGINS}
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "${BIODSH_PLATFORM_BIND:-127.0.0.1:8000}:8000"
+      - "${BIODSH_PLATFORM_BIND:?set BIODSH_PLATFORM_BIND}:${BIODSH_CONTAINER_PORT:?set BIODSH_CONTAINER_PORT}"
 
 volumes:
   biodsh-postgres:

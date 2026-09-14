@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from biodsh_platform import __version__
+from biodsh_platform.config import get_settings
 from biodsh_platform.db import get_db
 from biodsh_platform.models import ComputeNode, Job, JobEvent, JobStatus, NodeStatus, Project
 from biodsh_platform.schemas import (
@@ -17,6 +18,7 @@ from biodsh_platform.schemas import (
     NodeHeartbeat,
     NodeRead,
     NodeRegister,
+    PlatformMetadata,
     ProjectCreate,
     ProjectRead,
 )
@@ -25,7 +27,7 @@ from biodsh_platform.services import append_job_event, get_job_or_404, request_j
 
 DbSession = Annotated[Session, Depends(get_db)]
 health_router = APIRouter(tags=["health"])
-api_router = APIRouter(prefix="/api", dependencies=[Depends(require_platform_token)])
+api_router = APIRouter(dependencies=[Depends(require_platform_token)])
 
 
 @health_router.get("/health", response_model=HealthRead)
@@ -37,9 +39,37 @@ def health(db: DbSession) -> HealthRead:
         database = "error"
     return HealthRead(
         status="ok" if database == "ok" else "degraded",
-        service="biodsh-platform",
+        service=get_settings().service_name,
         version=__version__,
         database=database,
+    )
+
+
+@health_router.get("/healthz/live", response_model=HealthRead)
+def liveness(db: DbSession) -> HealthRead:
+    del db
+    settings = get_settings()
+    return HealthRead(
+        status="ok",
+        service=settings.service_name,
+        version=__version__,
+        database="unchecked",
+    )
+
+
+@health_router.get("/healthz/ready", response_model=HealthRead)
+def readiness(db: DbSession) -> HealthRead:
+    return health(db)
+
+
+@health_router.get("/.well-known/biodsh-platform", response_model=PlatformMetadata)
+def platform_metadata() -> PlatformMetadata:
+    settings = get_settings()
+    return PlatformMetadata(
+        service=settings.service_name,
+        version=__version__,
+        api_versions={"v1": settings.api_prefix},
+        health={"liveness": "/healthz/live", "readiness": "/healthz/ready"},
     )
 
 

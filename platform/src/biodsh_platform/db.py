@@ -9,7 +9,13 @@ from biodsh_platform.config import get_settings
 def _engine_options(url: str) -> dict[str, object]:
     if url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
-    return {"pool_pre_ping": True}
+    return {
+        "pool_pre_ping": True,
+        "pool_size": settings.database_pool_size,
+        "max_overflow": settings.database_max_overflow,
+        "pool_timeout": settings.database_pool_timeout,
+        "pool_recycle": settings.database_pool_recycle,
+    }
 
 
 settings = get_settings()

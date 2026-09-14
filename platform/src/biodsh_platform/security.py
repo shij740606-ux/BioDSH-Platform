@@ -12,7 +12,7 @@ bearer = HTTPBearer(auto_error=False)
 def require_platform_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> str:
-    expected = get_settings().platform_token
+    expected = get_settings().platform_token.get_secret_value()
     if credentials is None or not secrets.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

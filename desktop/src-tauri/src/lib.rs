@@ -257,7 +257,20 @@ fn platform_check(state: State<'_, AppState>) -> Result<serde_json::Value, Strin
     let st = state.settings.lock().unwrap().clone();
     let base = st.platform_url.trim().trim_end_matches('/');
     if base.is_empty() { return Err("请先填写平台地址".into()); }
-    let response = ureq::get(&format!("{base}/api/status"))
+    let metadata_response = ureq::get(&format!("{base}/.well-known/biodsh-platform"))
+        .timeout(std::time::Duration::from_secs(15))
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::Status(code, _) => format!("平台发现失败：HTTP {code}"),
+            other => other.to_string(),
+        })?;
+    let metadata_body = metadata_response.into_string().map_err(|e| e.to_string())?;
+    let metadata: serde_json::Value = serde_json::from_str(&metadata_body)
+        .map_err(|e| format!("平台发现响应无效：{e}"))?;
+    let api_path = metadata.pointer("/api_versions/v1").and_then(|v| v.as_str())
+        .filter(|v| v.starts_with('/'))
+        .ok_or_else(|| "平台没有提供兼容的 v1 API".to_string())?;
+    let response = ureq::get(&format!("{base}{api_path}/status"))
         .set("Authorization", &format!("Bearer {}", st.platform_token))
         .timeout(std::time::Duration::from_secs(15))
         .call()

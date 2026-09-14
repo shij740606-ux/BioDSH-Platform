@@ -76,3 +76,10 @@ class HealthRead(ApiModel):
     service: str
     version: str
     database: str
+
+
+class PlatformMetadata(ApiModel):
+    service: str
+    version: str
+    api_versions: dict[str, str]
+    health: dict[str, str]
