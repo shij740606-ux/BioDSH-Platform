@@ -32,6 +32,8 @@ mako==1.4.1
     # via alembic
 markupsafe==3.0.3
     # via mako
+psutil==7.2.2
+    # via biodsh-platform
 psycopg==3.3.5
     # via biodsh-platform
 psycopg-binary==3.3.5 ; implementation_name != 'pypy'

@@ -39,6 +39,22 @@ System administrators manage users and nodes. Project owners manage membership, 
 
 The Tauri desktop stores the platform session in the operating system keyring. On Windows this is Windows Credential Manager. `settings.json` contains only the platform URL and selected project ID; old `platformToken` values are removed during settings migration.
 
+## Compute workers and resource metrics
+
+Each compute server runs `biodsh-worker`. Enrollment uses the bootstrap token once and returns a unique node credential; the database stores only its SHA-256 digest. Heartbeats use the per-node credential and report CPU, memory, disk, network, NVIDIA GPU, and running-job metrics. The desktop reads the consolidated node list and history through the Platform API, so adding servers does not add desktop credentials or direct SSH connections.
+
+```powershell
+$env:BIODSH_WORKER_PLATFORM_URL = "https://platform.example.org"
+$env:BIODSH_WORKER_NODE_NAME = "compute-01"
+$env:BIODSH_WORKER_BOOTSTRAP_TOKEN = "replace-with-platform-bootstrap-token"
+uv run biodsh-worker enroll
+Remove-Item Env:BIODSH_WORKER_BOOTSTRAP_TOKEN
+uv run biodsh-worker run --once
+uv run biodsh-worker run
+```
+
+The Linux systemd deployment and multi-server connection model are documented in `docs/server-worker.zh.md`.
+
 ## Validation
 
 ```powershell

@@ -266,6 +266,18 @@ fn platform_logout(state: State<'_, AppState>) -> serde_json::Value {
     platform_auth::logout(&state.settings.lock().unwrap().platform_url)
 }
 #[tauri::command]
+fn platform_nodes(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    platform_auth::nodes(&state.settings.lock().unwrap().platform_url)
+}
+#[tauri::command]
+fn platform_node_metrics(state: State<'_, AppState>, node_id: String, minutes: u32) -> Result<serde_json::Value, String> {
+    platform_auth::node_metrics(&state.settings.lock().unwrap().platform_url, &node_id, minutes)
+}
+#[tauri::command]
+fn platform_update_node(state: State<'_, AppState>, node_id: String, status: String) -> Result<serde_json::Value, String> {
+    platform_auth::update_node(&state.settings.lock().unwrap().platform_url, &node_id, &status)
+}
+#[tauri::command]
 async fn credential_set(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<CredentialStatus, String> {
     write_credential(&state.paths, &key);
     // 让新 key 立刻生效：重启 dsh（key 通过环境变量注入）
@@ -693,7 +705,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout,
+            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
             skills_catalog, skills_statuses, skills_readme, skills_install, skills_uninstall,
             open_path, open_external, pick_folder, window_control, client_log, deepseek_balance, git_status, git_init, git_commit, dsh_rpc, dsh_open_session, dsh_new_session, check_updates, assistant_ask, session_export, workspace_files, read_workspace_image, ratings_get, ratings_set, session_delete, env_install_extra, migrate_scan, migrate_import, refdata_list, refdata_install, refdata_remove, demos_seed, dsh_set_context

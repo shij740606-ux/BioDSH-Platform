@@ -101,21 +101,67 @@ class ProjectMemberRead(ApiModel):
 
 class NodeRegister(WriteModel):
     name: str = Field(min_length=1, max_length=120)
+    hostname: str = Field(default="", max_length=255)
+    operating_system: str = Field(default="", max_length=120)
+    agent_version: str = Field(default="", max_length=40)
     capabilities: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Node name cannot be empty")
+        return value
+
+
+class NodeMetricCreate(WriteModel):
+    cpu_percent: float = Field(ge=0, le=100)
+    load_one: float | None = Field(default=None, ge=0)
+    memory_used_bytes: int = Field(ge=0)
+    memory_total_bytes: int = Field(ge=0)
+    memory_percent: float = Field(ge=0, le=100)
+    disk_used_bytes: int = Field(ge=0)
+    disk_total_bytes: int = Field(ge=0)
+    disk_percent: float = Field(ge=0, le=100)
+    network_rx_bytes: int = Field(ge=0)
+    network_tx_bytes: int = Field(ge=0)
+    running_jobs: int = Field(default=0, ge=0)
+    gpus: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
 
 
 class NodeHeartbeat(WriteModel):
     capabilities: dict[str, Any] = Field(default_factory=dict)
+    metric: NodeMetricCreate
+
+
+class NodeMetricRead(NodeMetricCreate):
+    id: int
+    node_id: str
+    collected_at: datetime
+
+
+class NodeUpdate(WriteModel):
+    status: Literal["online", "draining", "disabled"]
 
 
 class NodeRead(ApiModel):
     id: str
     name: str
     status: str
+    hostname: str
+    operating_system: str
+    agent_version: str
     capabilities: dict[str, Any]
+    latest_metric: NodeMetricRead | None = None
     last_heartbeat_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class NodeEnrollment(ApiModel):
+    node: NodeRead
+    node_token: str
 
 
 class JobCreate(WriteModel):

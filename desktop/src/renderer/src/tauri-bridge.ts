@@ -1,5 +1,6 @@
 // Tauri 桥：把 window.biodsh 接口实现为 invoke/listen，与 Electron preload 暴露的接口保持一致。
 import { invoke } from '@tauri-apps/api/core';
+import type { PlatformNodeControlStatus } from '@shared/types';
 import { listen } from '@tauri-apps/api/event';
 import type { AppSettings, IpcEvent, Rect } from '@shared/types';
 
@@ -12,6 +13,9 @@ export function installTauriBridge() {
     platformSession: () => invoke('platform_session'),
     platformLogin: (username: string, password: string) => invoke('platform_login', { username, password }),
     platformLogout: () => invoke('platform_logout'),
+    platformNodes: () => invoke('platform_nodes'),
+    platformNodeMetrics: (nodeId: string, minutes = 60) => invoke('platform_node_metrics', { nodeId, minutes }),
+    platformUpdateNode: (nodeId: string, status: PlatformNodeControlStatus) => invoke('platform_update_node', { nodeId, status }),
     getCredential: () => invoke('credential_get'),
     setCredential: (key: string) => invoke('credential_set', { key }),
     envStatus: () => invoke('env_status'),

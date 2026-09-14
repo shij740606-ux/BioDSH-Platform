@@ -98,6 +98,46 @@ export interface PlatformSession {
   projects: PlatformProject[];
 }
 
+export type PlatformNodeStatus = 'online' | 'offline' | 'draining' | 'disabled';
+export type PlatformNodeControlStatus = Exclude<PlatformNodeStatus, 'offline'>;
+export interface PlatformGpuMetric {
+  index: number;
+  name: string;
+  uuid?: string;
+  utilization_percent?: number;
+  memory_used_mib?: number;
+  memory_total_mib?: number;
+  temperature_c?: number;
+}
+export interface PlatformNodeMetric {
+  id: number;
+  nodeId: string;
+  cpuPercent: number;
+  loadOne?: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  memoryPercent: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  diskPercent: number;
+  networkRxBytes: number;
+  networkTxBytes: number;
+  runningJobs: number;
+  gpus: PlatformGpuMetric[];
+  collectedAt: string;
+}
+export interface PlatformNode {
+  id: string;
+  name: string;
+  status: PlatformNodeStatus;
+  hostname: string;
+  operatingSystem: string;
+  agentVersion: string;
+  capabilities: Record<string, unknown>;
+  latestMetric?: PlatformNodeMetric;
+  lastHeartbeatAt?: string;
+}
+
 export interface McpServer {
   name: string;
   transport: 'stdio' | 'streamable-http';

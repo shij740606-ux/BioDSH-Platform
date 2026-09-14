@@ -150,6 +150,9 @@ function registerIpc() {
   ipcMain.handle('platform:session', () => platformAuth.status());
   ipcMain.handle('platform:login', (_e, username: string, password: string) => platformAuth.login(username, password));
   ipcMain.handle('platform:logout', () => platformAuth.logout());
+  ipcMain.handle('platform:nodes', () => platformAuth.nodes());
+  ipcMain.handle('platform:nodeMetrics', (_e, nodeId: string, minutes: number) => platformAuth.nodeMetrics(nodeId, minutes));
+  ipcMain.handle('platform:updateNode', (_e, nodeId: string, status: 'online' | 'draining' | 'disabled') => platformAuth.updateNode(nodeId, status));
   ipcMain.handle('credential:get', () => readCredential(paths));
   ipcMain.handle('credential:set', async (_e, key: string) => { writeCredential(paths, key); if (dsh.status.state !== 'stopped') { const s = await dsh.restart(settings.workspace || paths.workspace); if (s.state === 'running' && s.url) ensureDshView(s.url); } return readCredential(paths); });
   const openSession = (id: string) => dshView?.webContents.executeJavaScript(`try { localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: ${JSON.stringify(id)} })); } catch (e) {} location.reload();`);

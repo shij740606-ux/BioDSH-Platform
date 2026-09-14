@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -17,6 +17,7 @@ from biodsh_platform.models import (
     Job,
     JobEvent,
     JobStatus,
+    NodeMetric,
     NodeStatus,
     Project,
     ProjectMember,
@@ -32,9 +33,12 @@ from biodsh_platform.schemas import (
     JobRead,
     LoginRequest,
     MemberSet,
+    NodeEnrollment,
     NodeHeartbeat,
+    NodeMetricRead,
     NodeRead,
     NodeRegister,
+    NodeUpdate,
     PlatformMetadata,
     ProjectCreate,
     ProjectMemberRead,
@@ -48,10 +52,13 @@ from biodsh_platform.schemas import (
 from biodsh_platform.security import (
     AdminUser,
     CurrentUser,
+    NodeActor,
     PlatformActor,
     create_access_token,
     find_refresh_token,
+    hash_opaque_token,
     hash_password,
+    issue_node_token,
     issue_refresh_token,
     normalize_username,
     password_hasher,
@@ -85,6 +92,26 @@ def aware(value: datetime) -> datetime:
 def project_response(db: Session, user: User, project: Project) -> ProjectRead:
     return ProjectRead.model_validate(project).model_copy(
         update={"role": project_role(db, user, project.id)}
+    )
+
+
+def node_response(db: Session, node: ComputeNode) -> NodeRead:
+    latest = db.scalar(
+        select(NodeMetric)
+        .where(NodeMetric.node_id == node.id)
+        .order_by(NodeMetric.collected_at.desc())
+        .limit(1)
+    )
+    effective_status = node.status
+    if node.status == NodeStatus.ONLINE:
+        cutoff = datetime.now(UTC) - timedelta(seconds=get_settings().node_offline_seconds)
+        if node.last_heartbeat_at is None or aware(node.last_heartbeat_at) < cutoff:
+            effective_status = NodeStatus.OFFLINE
+    return NodeRead.model_validate(node).model_copy(
+        update={
+            "status": effective_status,
+            "latest_metric": NodeMetricRead.model_validate(latest) if latest else None,
+        }
     )
 
 
@@ -124,7 +151,14 @@ def platform_metadata() -> PlatformMetadata:
         version=__version__,
         api_versions={"v1": settings.api_prefix},
         health={"liveness": "/healthz/live", "readiness": "/healthz/ready"},
-        capabilities=["password-auth", "refresh-token-rotation", "project-rbac", "audit-log"],
+        capabilities=[
+            "password-auth",
+            "refresh-token-rotation",
+            "project-rbac",
+            "audit-log",
+            "multi-node",
+            "node-resource-metrics",
+        ],
     )
 
 
@@ -460,41 +494,116 @@ def remove_project_member(project_id: str, user_id: str, db: DbSession, actor: C
     db.commit()
 
 
-@api_router.post("/nodes/register", response_model=NodeRead, status_code=status.HTTP_201_CREATED)
-def register_node(body: NodeRegister, db: DbSession, _: PlatformActor) -> ComputeNode:
-    now = datetime.now(UTC)
-    node = db.scalar(select(ComputeNode).where(ComputeNode.name == body.name))
-    if node is None:
-        node = ComputeNode(name=body.name)
-        db.add(node)
-    node.status = NodeStatus.ONLINE
-    node.capabilities = body.capabilities
-    node.last_heartbeat_at = now
-    db.flush()
-    audit(db, "node.register", resource_type="node", resource_id=node.id)
-    db.commit()
+@api_router.post(
+    "/nodes/register", response_model=NodeEnrollment, status_code=status.HTTP_201_CREATED
+)
+def register_node(body: NodeRegister, db: DbSession, _: PlatformActor) -> NodeEnrollment:
+    if db.scalar(select(ComputeNode.id).where(ComputeNode.name == body.name)) is not None:
+        raise HTTPException(status_code=409, detail="A compute node with this name already exists")
+    raw_token = issue_node_token()
+    node = ComputeNode(
+        name=body.name,
+        token_hash=hash_opaque_token(raw_token),
+        hostname=body.hostname,
+        operating_system=body.operating_system,
+        agent_version=body.agent_version,
+        status=NodeStatus.OFFLINE,
+        capabilities=body.capabilities,
+    )
+    db.add(node)
+    try:
+        db.flush()
+        audit(db, "node.register", resource_type="node", resource_id=node.id)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="A compute node with this name already exists"
+        ) from error
     db.refresh(node)
-    return node
+    return NodeEnrollment(node=node_response(db, node), node_token=raw_token)
 
 
-@api_router.post("/nodes/{node_id}/heartbeat", response_model=NodeRead)
-def heartbeat_node(
-    node_id: str, body: NodeHeartbeat, db: DbSession, _: PlatformActor
-) -> ComputeNode:
+@api_router.post("/nodes/{node_id}/rotate-token", response_model=NodeEnrollment)
+def rotate_node_token(node_id: str, db: DbSession, admin: AdminUser) -> NodeEnrollment:
     node = db.get(ComputeNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="Compute node not found")
-    node.status = NodeStatus.ONLINE
-    node.capabilities = body.capabilities
-    node.last_heartbeat_at = datetime.now(UTC)
+    raw_token = issue_node_token()
+    node.token_hash = hash_opaque_token(raw_token)
+    audit(
+        db,
+        "node.token.rotate",
+        actor_user_id=admin.id,
+        resource_type="node",
+        resource_id=node.id,
+    )
     db.commit()
     db.refresh(node)
-    return node
+    return NodeEnrollment(node=node_response(db, node), node_token=raw_token)
+
+
+@api_router.post("/nodes/{node_id}/heartbeat", response_model=NodeRead)
+def heartbeat_node(node_id: str, body: NodeHeartbeat, db: DbSession, node: NodeActor) -> NodeRead:
+    if node.id != node_id:
+        raise HTTPException(status_code=403, detail="Node credential does not match resource")
+    if node.status not in {NodeStatus.DISABLED, NodeStatus.DRAINING}:
+        node.status = NodeStatus.ONLINE
+    node.capabilities = body.capabilities
+    node.last_heartbeat_at = datetime.now(UTC)
+    metric = NodeMetric(node_id=node.id, **body.metric.model_dump())
+    db.add(metric)
+    cutoff = datetime.now(UTC) - timedelta(days=get_settings().metrics_retention_days)
+    db.execute(delete(NodeMetric).where(NodeMetric.collected_at < cutoff))
+    db.commit()
+    db.refresh(node)
+    return node_response(db, node)
 
 
 @api_router.get("/nodes", response_model=list[NodeRead])
-def list_nodes(db: DbSession, _: AdminUser) -> list[ComputeNode]:
-    return list(db.scalars(select(ComputeNode).order_by(ComputeNode.name)))
+def list_nodes(db: DbSession, _: AdminUser) -> list[NodeRead]:
+    nodes = db.scalars(select(ComputeNode).order_by(ComputeNode.name))
+    return [node_response(db, node) for node in nodes]
+
+
+@api_router.patch("/nodes/{node_id}", response_model=NodeRead)
+def update_node(node_id: str, body: NodeUpdate, db: DbSession, admin: AdminUser) -> NodeRead:
+    node = db.get(ComputeNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Compute node not found")
+    node.status = body.status
+    audit(
+        db,
+        "node.status.update",
+        actor_user_id=admin.id,
+        resource_type="node",
+        resource_id=node.id,
+        details={"status": body.status},
+    )
+    db.commit()
+    db.refresh(node)
+    return node_response(db, node)
+
+
+@api_router.get("/nodes/{node_id}/metrics", response_model=list[NodeMetricRead])
+def list_node_metrics(
+    node_id: str, db: DbSession, _: AdminUser, minutes: int = 60, limit: int = 720
+) -> list[NodeMetric]:
+    if db.get(ComputeNode, node_id) is None:
+        raise HTTPException(status_code=404, detail="Compute node not found")
+    minutes = max(1, min(minutes, get_settings().metrics_retention_days * 24 * 60))
+    limit = max(1, min(limit, 2000))
+    cutoff = datetime.now(UTC) - timedelta(minutes=minutes)
+    rows = list(
+        db.scalars(
+            select(NodeMetric)
+            .where(NodeMetric.node_id == node_id, NodeMetric.collected_at >= cutoff)
+            .order_by(NodeMetric.collected_at.desc())
+            .limit(limit)
+        )
+    )
+    rows.reverse()
+    return rows
 
 
 @api_router.post("/jobs", response_model=JobRead, status_code=status.HTTP_201_CREATED)

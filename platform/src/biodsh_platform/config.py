@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     refresh_token_days: int = Field(default=30, ge=1, le=90)
     login_max_attempts: int = Field(default=5, ge=3, le=20)
     login_lock_minutes: int = Field(default=15, ge=1, le=1440)
+    node_offline_seconds: int = Field(default=45, ge=15, le=600)
+    metrics_retention_days: int = Field(default=7, ge=1, le=90)
     auto_create_schema: bool = False
     cors_origins: list[str] = Field(default_factory=list)
 

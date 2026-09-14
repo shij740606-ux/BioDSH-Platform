@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformSession } from '../shared/types';
+import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession } from '../shared/types';
 
 const api = {
   appInfo: () => ipcRenderer.invoke('app:info'),
@@ -8,6 +8,9 @@ const api = {
   platformSession: (): Promise<PlatformSession> => ipcRenderer.invoke('platform:session'),
   platformLogin: (username: string, password: string): Promise<PlatformSession> => ipcRenderer.invoke('platform:login', username, password),
   platformLogout: (): Promise<PlatformSession> => ipcRenderer.invoke('platform:logout'),
+  platformNodes: (): Promise<PlatformNode[]> => ipcRenderer.invoke('platform:nodes'),
+  platformNodeMetrics: (nodeId: string, minutes = 60): Promise<PlatformNodeMetric[]> => ipcRenderer.invoke('platform:nodeMetrics', nodeId, minutes),
+  platformUpdateNode: (nodeId: string, status: PlatformNodeControlStatus): Promise<PlatformNode> => ipcRenderer.invoke('platform:updateNode', nodeId, status),
   getCredential: () => ipcRenderer.invoke('credential:get'),
   setCredential: (key: string) => ipcRenderer.invoke('credential:set', key),
   envStatus: () => ipcRenderer.invoke('env:status'),

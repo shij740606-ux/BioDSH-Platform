@@ -1,10 +1,31 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { safeStorage } from 'electron';
-import type { AppPaths, PlatformProject, PlatformSession, PlatformUser } from '../shared/types';
+import type { AppPaths, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformNodeStatus, PlatformProject, PlatformSession, PlatformUser } from '../shared/types';
 
 interface StoredSession { baseUrl: string; apiPath: string; accessToken: string; refreshToken: string }
 interface TokenResponse { access_token: string; refresh_token: string; user: Record<string, unknown> }
+
+function metricFromApi(raw: Record<string, unknown>): PlatformNodeMetric {
+  return {
+    id: Number(raw.id), nodeId: String(raw.node_id), cpuPercent: Number(raw.cpu_percent),
+    loadOne: raw.load_one == null ? undefined : Number(raw.load_one),
+    memoryUsedBytes: Number(raw.memory_used_bytes), memoryTotalBytes: Number(raw.memory_total_bytes), memoryPercent: Number(raw.memory_percent),
+    diskUsedBytes: Number(raw.disk_used_bytes), diskTotalBytes: Number(raw.disk_total_bytes), diskPercent: Number(raw.disk_percent),
+    networkRxBytes: Number(raw.network_rx_bytes), networkTxBytes: Number(raw.network_tx_bytes), runningJobs: Number(raw.running_jobs),
+    gpus: Array.isArray(raw.gpus) ? raw.gpus as PlatformNodeMetric['gpus'] : [], collectedAt: String(raw.collected_at),
+  };
+}
+
+function nodeFromApi(raw: Record<string, unknown>): PlatformNode {
+  return {
+    id: String(raw.id), name: String(raw.name), status: raw.status as PlatformNodeStatus,
+    hostname: String(raw.hostname ?? ''), operatingSystem: String(raw.operating_system ?? ''), agentVersion: String(raw.agent_version ?? ''),
+    capabilities: raw.capabilities as Record<string, unknown> ?? {},
+    latestMetric: raw.latest_metric ? metricFromApi(raw.latest_metric as Record<string, unknown>) : undefined,
+    lastHeartbeatAt: raw.last_heartbeat_at ? String(raw.last_heartbeat_at) : undefined,
+  };
+}
 
 export class PlatformAuth {
   constructor(private readonly paths: AppPaths, private readonly getBaseUrl: () => string) {}
@@ -53,10 +74,19 @@ export class PlatformAuth {
     return next;
   }
 
-  private async request(session: StoredSession, resource: string, retry = true): Promise<Response> {
-    const response = await fetch(`${session.baseUrl}${session.apiPath}${resource}`, { headers: { Authorization: `Bearer ${session.accessToken}` } });
-    if (response.status === 401 && retry) return this.request(await this.refresh(session), resource, false);
+  private async request(session: StoredSession, resource: string, init: RequestInit = {}, retry = true): Promise<Response> {
+    const response = await fetch(`${session.baseUrl}${session.apiPath}${resource}`, {
+      ...init,
+      headers: { ...init.headers, Authorization: `Bearer ${session.accessToken}` },
+    });
+    if (response.status === 401 && retry) return this.request(await this.refresh(session), resource, init, false);
     return response;
+  }
+
+  private session(): StoredSession {
+    const session = this.load();
+    if (!session || session.baseUrl !== this.getBaseUrl().trim().replace(/\/$/, '')) throw new Error('请先登录平台');
+    return session;
   }
 
   async status(): Promise<PlatformSession> {
@@ -80,6 +110,26 @@ export class PlatformAuth {
       if (String(error).includes('登录已过期')) return { authenticated: false, projects: [] };
       throw error;
     }
+  }
+
+  async nodes(): Promise<PlatformNode[]> {
+    const response = await this.request(this.session(), '/nodes');
+    if (!response.ok) throw new Error(response.status === 403 ? '只有管理员可以查看服务器' : `服务器读取失败：HTTP ${response.status}`);
+    return (await response.json() as Array<Record<string, unknown>>).map(nodeFromApi);
+  }
+
+  async nodeMetrics(nodeId: string, minutes = 60): Promise<PlatformNodeMetric[]> {
+    const response = await this.request(this.session(), `/nodes/${encodeURIComponent(nodeId)}/metrics?minutes=${minutes}`);
+    if (!response.ok) throw new Error(`资源历史读取失败：HTTP ${response.status}`);
+    return (await response.json() as Array<Record<string, unknown>>).map(metricFromApi);
+  }
+
+  async updateNode(nodeId: string, status: PlatformNodeControlStatus): Promise<PlatformNode> {
+    const response = await this.request(this.session(), `/nodes/${encodeURIComponent(nodeId)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error(`服务器状态更新失败：HTTP ${response.status}`);
+    return nodeFromApi(await response.json() as Record<string, unknown>);
   }
 
   async logout(): Promise<PlatformSession> {

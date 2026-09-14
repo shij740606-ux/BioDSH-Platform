@@ -6,7 +6,7 @@ from typing import Annotated
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import InvalidTokenError
 from sqlalchemy import select
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from biodsh_platform.config import get_settings
 from biodsh_platform.db import get_db
-from biodsh_platform.models import RefreshToken, User
+from biodsh_platform.models import ComputeNode, RefreshToken, User
 
 bearer = HTTPBearer(auto_error=False)
 password_hasher = PasswordHasher()
@@ -70,6 +70,27 @@ def issue_refresh_token(db: Session, user: User) -> tuple[str, RefreshToken]:
 def find_refresh_token(db: Session, raw: str) -> RefreshToken | None:
     digest = hashlib.sha256(raw.encode()).hexdigest()
     return db.scalar(select(RefreshToken).where(RefreshToken.token_hash == digest))
+
+
+def hash_opaque_token(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def issue_node_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
+def require_node(
+    db: Annotated[Session, Depends(get_db)],
+    node_header_id: Annotated[str | None, Header(alias="X-BioDSH-Node-ID")] = None,
+    node_token: Annotated[str | None, Header(alias="X-BioDSH-Node-Token")] = None,
+) -> ComputeNode:
+    node = db.get(ComputeNode, node_header_id) if node_header_id else None
+    supplied_hash = hash_opaque_token(node_token or "")
+    expected_hash = node.token_hash if node and node.token_hash else "0" * 64
+    if node is None or not node_token or not secrets.compare_digest(supplied_hash, expected_hash):
+        raise HTTPException(status_code=401, detail="Missing or invalid node credentials")
+    return node
 
 
 def require_platform_token(
@@ -130,3 +151,4 @@ def _unauthorized() -> HTTPException:
 CurrentUser = Annotated[User, Depends(require_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
 PlatformActor = Annotated[str, Depends(require_platform_token)]
+NodeActor = Annotated[ComputeNode, Depends(require_node)]

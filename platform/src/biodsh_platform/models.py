@@ -4,8 +4,10 @@ from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -143,6 +145,10 @@ class ComputeNode(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(120))
+    token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    hostname: Mapped[str] = mapped_column(String(255), default="")
+    operating_system: Mapped[str] = mapped_column(String(120), default="")
+    agent_version: Mapped[str] = mapped_column(String(40), default="")
     status: Mapped[str] = mapped_column(String(24), default=NodeStatus.OFFLINE)
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -151,6 +157,36 @@ class ComputeNode(Base):
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
     jobs: Mapped[list["Job"]] = relationship(back_populates="node")
+    metrics: Mapped[list["NodeMetric"]] = relationship(
+        back_populates="node", cascade="all, delete-orphan"
+    )
+
+
+class NodeMetric(Base):
+    __tablename__ = "node_metrics"
+    __table_args__ = (
+        Index("ix_node_metrics_node_collected", "node_id", "collected_at"),
+        Index("ix_node_metrics_collected", "collected_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    node_id: Mapped[str] = mapped_column(
+        ForeignKey("compute_nodes.id", ondelete="CASCADE"), nullable=False
+    )
+    cpu_percent: Mapped[float] = mapped_column(Float)
+    load_one: Mapped[float | None] = mapped_column(Float)
+    memory_used_bytes: Mapped[int] = mapped_column(BigInteger)
+    memory_total_bytes: Mapped[int] = mapped_column(BigInteger)
+    memory_percent: Mapped[float] = mapped_column(Float)
+    disk_used_bytes: Mapped[int] = mapped_column(BigInteger)
+    disk_total_bytes: Mapped[int] = mapped_column(BigInteger)
+    disk_percent: Mapped[float] = mapped_column(Float)
+    network_rx_bytes: Mapped[int] = mapped_column(BigInteger)
+    network_tx_bytes: Mapped[int] = mapped_column(BigInteger)
+    running_jobs: Mapped[int] = mapped_column(Integer, default=0)
+    gpus: Mapped[list] = mapped_column(JSON, default=list)
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    node: Mapped[ComputeNode] = relationship(back_populates="metrics")
 
 
 class Job(Base):
@@ -161,9 +197,7 @@ class Job(Base):
     project_id: Mapped[str] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    node_id: Mapped[str | None] = mapped_column(
-        ForeignKey("compute_nodes.id", ondelete="SET NULL")
-    )
+    node_id: Mapped[str | None] = mapped_column(ForeignKey("compute_nodes.id", ondelete="SET NULL"))
     kind: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(24), default=JobStatus.QUEUED)
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -182,14 +216,10 @@ class Job(Base):
 
 class JobEvent(Base):
     __tablename__ = "job_events"
-    __table_args__ = (
-        UniqueConstraint("job_id", "sequence", name="uq_job_events_job_sequence"),
-    )
+    __table_args__ = (UniqueConstraint("job_id", "sequence", name="uq_job_events_job_sequence"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    job_id: Mapped[str] = mapped_column(
-        ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
-    )
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(String(40), default="status")
     message: Mapped[str] = mapped_column(Text, default="")

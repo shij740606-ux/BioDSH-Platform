@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from biodsh_platform.db import SessionLocal
-from biodsh_platform.models import RefreshToken, User
+from biodsh_platform.models import ComputeNode, NodeMetric, RefreshToken, User
 
 
 def test_health_and_discovery_are_public(client: TestClient) -> None:
@@ -217,13 +217,90 @@ def test_node_registration_uses_bootstrap_token_and_listing_requires_admin(
     user_factory: Callable,
 ) -> None:
     _, regular_headers = user_factory("regular")
-    body = {"name": "node-01", "capabilities": {"cpu_total": 32}}
+    body = {
+        "name": " node-01 ",
+        "hostname": "compute-01",
+        "operating_system": "Linux",
+        "agent_version": "0.1.0",
+        "capabilities": {"cpu_logical": 32},
+    }
     first = client.post("/api/v1/nodes/register", headers=bootstrap_headers, json=body)
     second = client.post("/api/v1/nodes/register", headers=bootstrap_headers, json=body)
-    assert first.status_code == second.status_code == 201
-    assert first.json()["id"] == second.json()["id"]
+    assert first.status_code == 201
+    assert second.status_code == 409
+    enrollment = first.json()
+    node = enrollment["node"]
+    assert node["name"] == "node-01"
+    assert (
+        client.post(
+            "/api/v1/nodes/register",
+            headers=bootstrap_headers,
+            json={**body, "name": "   "},
+        ).status_code
+        == 422
+    )
+    node_headers = {
+        "X-BioDSH-Node-ID": node["id"],
+        "X-BioDSH-Node-Token": enrollment["node_token"],
+    }
+    metric = {
+        "cpu_percent": 42.5,
+        "load_one": 3.1,
+        "memory_used_bytes": 8_000_000_000,
+        "memory_total_bytes": 16_000_000_000,
+        "memory_percent": 50,
+        "disk_used_bytes": 200_000_000_000,
+        "disk_total_bytes": 1_000_000_000_000,
+        "disk_percent": 20,
+        "network_rx_bytes": 1234,
+        "network_tx_bytes": 5678,
+        "running_jobs": 1,
+        "gpus": [{"index": 0, "name": "Test GPU", "utilization_percent": 75}],
+    }
+    heartbeat = client.post(
+        f"/api/v1/nodes/{node['id']}/heartbeat",
+        headers=node_headers,
+        json={"capabilities": body["capabilities"], "metric": metric},
+    )
+    assert heartbeat.status_code == 200
+    assert heartbeat.json()["latest_metric"]["cpu_percent"] == 42.5
+    assert (
+        client.post(
+            f"/api/v1/nodes/{node['id']}/heartbeat",
+            headers=bootstrap_headers,
+            json={"capabilities": {}, "metric": metric},
+        ).status_code
+        == 401
+    )
     assert (
         client.post("/api/v1/nodes/register", headers=regular_headers, json=body).status_code == 401
     )
     assert client.get("/api/v1/nodes", headers=regular_headers).status_code == 403
-    assert client.get("/api/v1/nodes", headers=admin_headers).status_code == 200
+    listed = client.get("/api/v1/nodes", headers=admin_headers)
+    assert listed.status_code == 200
+    assert listed.json()[0]["latest_metric"]["memory_percent"] == 50
+    history = client.get(f"/api/v1/nodes/{node['id']}/metrics", headers=admin_headers)
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+    assert (
+        client.patch(
+            f"/api/v1/nodes/{node['id']}",
+            headers=admin_headers,
+            json={"status": "disabled"},
+        ).json()["status"]
+        == "disabled"
+    )
+    rotated = client.post(f"/api/v1/nodes/{node['id']}/rotate-token", headers=admin_headers).json()
+    assert rotated["node_token"] != enrollment["node_token"]
+    assert (
+        client.post(
+            f"/api/v1/nodes/{node['id']}/heartbeat",
+            headers=node_headers,
+            json={"capabilities": {}, "metric": metric},
+        ).status_code
+        == 401
+    )
+    with SessionLocal() as db:
+        stored_node = db.get(ComputeNode, node["id"])
+        assert stored_node.token_hash != rotated["node_token"]
+        assert db.scalar(select(NodeMetric).where(NodeMetric.node_id == node["id"])) is not None

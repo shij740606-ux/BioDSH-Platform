@@ -111,6 +111,61 @@ fn get_with_refresh(
     }
 }
 
+fn patch(
+    session: &StoredSession,
+    resource: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, u16> {
+    match ureq::patch(&format!(
+        "{}{}{}",
+        session.base_url, session.api_path, resource
+    ))
+    .set("Authorization", &format!("Bearer {}", session.access_token))
+    .timeout(std::time::Duration::from_secs(15))
+    .send_json(body)
+    {
+        Ok(response) => parse(response).map_err(|_| 502),
+        Err(ureq::Error::Status(code, _)) => Err(code),
+        Err(_) => Err(503),
+    }
+}
+
+fn configured_session(configured_url: &str) -> Result<StoredSession, String> {
+    let configured = configured_url.trim().trim_end_matches('/');
+    let session = load().ok_or_else(|| "请先登录平台".to_string())?;
+    if session.base_url != configured {
+        clear();
+        return Err("请先登录平台".into());
+    }
+    Ok(session)
+}
+
+fn normalize_metric(value: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "id": value["id"], "nodeId": value["node_id"],
+        "cpuPercent": value["cpu_percent"], "loadOne": value["load_one"],
+        "memoryUsedBytes": value["memory_used_bytes"], "memoryTotalBytes": value["memory_total_bytes"],
+        "memoryPercent": value["memory_percent"], "diskUsedBytes": value["disk_used_bytes"],
+        "diskTotalBytes": value["disk_total_bytes"], "diskPercent": value["disk_percent"],
+        "networkRxBytes": value["network_rx_bytes"], "networkTxBytes": value["network_tx_bytes"],
+        "runningJobs": value["running_jobs"], "gpus": value["gpus"], "collectedAt": value["collected_at"]
+    })
+}
+
+fn normalize_node(value: &serde_json::Value) -> serde_json::Value {
+    let metric = if value["latest_metric"].is_null() {
+        serde_json::Value::Null
+    } else {
+        normalize_metric(&value["latest_metric"])
+    };
+    serde_json::json!({
+        "id": value["id"], "name": value["name"], "status": value["status"],
+        "hostname": value["hostname"], "operatingSystem": value["operating_system"],
+        "agentVersion": value["agent_version"], "capabilities": value["capabilities"],
+        "latestMetric": metric, "lastHeartbeatAt": value["last_heartbeat_at"]
+    })
+}
+
 pub fn login(
     configured_url: &str,
     username: &str,
@@ -162,6 +217,56 @@ pub fn status(configured_url: &str) -> Result<serde_json::Value, String> {
     Ok(
         serde_json::json!({ "authenticated": true, "user": { "id": me["id"], "username": me["username"], "isActive": me["is_active"], "isAdmin": me["is_admin"] }, "projects": projects }),
     )
+}
+
+pub fn nodes(configured_url: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let values = get_with_refresh(&mut session, "/nodes")?;
+    let rows = values
+        .as_array()
+        .ok_or_else(|| "服务器列表响应无效".to_string())?;
+    Ok(serde_json::Value::Array(
+        rows.iter().map(normalize_node).collect(),
+    ))
+}
+
+pub fn node_metrics(
+    configured_url: &str,
+    node_id: &str,
+    minutes: u32,
+) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(configured_url)?;
+    let resource = format!("/nodes/{node_id}/metrics?minutes={}", minutes.max(1));
+    let values = get_with_refresh(&mut session, &resource)?;
+    let rows = values
+        .as_array()
+        .ok_or_else(|| "资源历史响应无效".to_string())?;
+    Ok(serde_json::Value::Array(
+        rows.iter().map(normalize_metric).collect(),
+    ))
+}
+
+pub fn update_node(
+    configured_url: &str,
+    node_id: &str,
+    status: &str,
+) -> Result<serde_json::Value, String> {
+    if !matches!(status, "online" | "draining" | "disabled") {
+        return Err("不支持的服务器状态".into());
+    }
+    let mut session = configured_session(configured_url)?;
+    let resource = format!("/nodes/{node_id}");
+    let body = serde_json::json!({ "status": status });
+    let value = match patch(&session, &resource, body.clone()) {
+        Ok(value) => value,
+        Err(401) => {
+            refresh(&mut session)?;
+            patch(&session, &resource, body)
+                .map_err(|code| format!("服务器状态更新失败：HTTP {code}"))?
+        }
+        Err(code) => return Err(format!("服务器状态更新失败：HTTP {code}")),
+    };
+    Ok(normalize_node(&value))
 }
 
 pub fn logout(configured_url: &str) -> serde_json::Value {
