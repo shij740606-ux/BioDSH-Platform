@@ -28,6 +28,12 @@ uv run ruff check .
 uv run pytest -q
 ```
 
+When production dependencies change, regenerate the container lock file with:
+
+```powershell
+uv export --frozen --no-dev --no-hashes --no-emit-project --output-file requirements.txt
+```
+
 For PostgreSQL, copy `.env.example` to `.env`, replace the token, and run
 `docker compose -f deploy/compose.yaml up -d --build` from the repository root.
 
