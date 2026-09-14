@@ -9,7 +9,7 @@ on:
       - "desktop/src-tauri/**"
       - ".github/workflows/platform-ci.yml"
   push:
-    branches: [main]
+    branches: [main, "feature/**", "fix/**"]
     paths:
       - "platform/**"
       - "deploy/**"
