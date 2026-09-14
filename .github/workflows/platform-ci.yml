@@ -72,6 +72,8 @@ jobs:
         run: npm run typecheck
       - name: Build desktop web bundles
         run: npm run build
+      - name: Prepare Tauri check resources
+        run: New-Item -ItemType Directory -Force resources/node/win32-x64, resources/bin/win32-x64 | Out-Null
       - name: Check Tauri backend
         working-directory: desktop/src-tauri
         run: cargo check --locked
