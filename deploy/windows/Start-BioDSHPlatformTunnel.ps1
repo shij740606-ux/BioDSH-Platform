@@ -65,7 +65,25 @@ if ($ValidateOnly) {
     return
 }
 
-while ($true) {
-    & $sshExecutable @arguments
-    Start-Sleep -Seconds ([int]$config.retrySeconds)
+$mutexKeyBytes = [Text.Encoding]::UTF8.GetBytes($resolvedConfigPath.ToLowerInvariant())
+$sha256 = [Security.Cryptography.SHA256]::Create()
+try {
+    $mutexKey = ([BitConverter]::ToString($sha256.ComputeHash($mutexKeyBytes))).Replace('-', '')
+} finally {
+    $sha256.Dispose()
+}
+$mutex = [Threading.Mutex]::new($false, "Local\BioDSHPlatformTunnel-$mutexKey")
+if (-not $mutex.WaitOne(0)) {
+    $mutex.Dispose()
+    return
+}
+
+try {
+    while ($true) {
+        & $sshExecutable @arguments
+        Start-Sleep -Seconds ([int]$config.retrySeconds)
+    }
+} finally {
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }

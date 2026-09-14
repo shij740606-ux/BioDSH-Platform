@@ -5,6 +5,8 @@ param(
 
     [string]$RunnerPath = (Join-Path $PSScriptRoot 'Start-BioDSHPlatformTunnel.ps1'),
 
+    [string]$LauncherPath = (Join-Path $PSScriptRoot 'Launch-BioDSHPlatformTunnel.ps1'),
+
     [string]$TaskName = 'BioDSH Platform Tunnel'
 )
 
@@ -12,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $resolvedRunnerPath = (Resolve-Path -LiteralPath $RunnerPath).Path
+$resolvedLauncherPath = (Resolve-Path -LiteralPath $LauncherPath).Path
 $resolvedConfigPath = (Resolve-Path -LiteralPath $ConfigPath).Path
 & $resolvedRunnerPath -ConfigPath $resolvedConfigPath -ValidateOnly
 
@@ -20,7 +23,8 @@ $arguments = @(
     '-NonInteractive',
     '-WindowStyle', 'Hidden',
     '-ExecutionPolicy', 'Bypass',
-    '-File', ('"{0}"' -f $resolvedRunnerPath),
+    '-File', ('"{0}"' -f $resolvedLauncherPath),
+    '-RunnerPath', ('"{0}"' -f $resolvedRunnerPath),
     '-ConfigPath', ('"{0}"' -f $resolvedConfigPath)
 ) -join ' '
 
