@@ -69,6 +69,7 @@ input, textarea, pre, code, .selectable { user-select: text; cursor: auto; }
 
 .drag { -webkit-app-region: drag; }
 .no-drag { -webkit-app-region: no-drag; }
+.app-main > div > header { padding-right: 108px; }
 
 /* 细滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

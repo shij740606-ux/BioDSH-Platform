@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { AppProvider, useApp } from './store';
-import Sidebar from './components/Sidebar';
+import Sidebar, { WindowControls } from './components/Sidebar';
 import ChatView from './views/ChatView';
 import StoreView from './views/StoreView';
 import DataView from './views/DataView';
@@ -36,7 +36,8 @@ function Shell() {
     <LangContext.Provider value={resolveLang(settings.language)}>
     <div className="h-full w-full flex">
       <Sidebar />
-      <main className="flex-1 min-w-0 h-full relative">
+      <main className="app-main flex-1 min-w-0 h-full relative">
+        <div className="absolute right-3 top-[11px] z-40 no-drag"><WindowControls compact /></div>
         {tab === 'chat' && <ChatView />}
         {tab === 'data' && <DataView />}
         {tab === 'db' && <DatabaseView />}

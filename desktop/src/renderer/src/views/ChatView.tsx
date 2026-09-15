@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { RefreshCw, Play, AlertTriangle } from 'lucide-react';
+import { Play, AlertTriangle } from 'lucide-react';
 import { useApp } from '../store';
 import { useT } from '../i18n';
 
@@ -39,11 +39,6 @@ export default function ChatView() {
           {!env.ready && (
             <button className="no-drag badge" onClick={() => setTab('env')}>{t('分析环境未就绪')}</button>
           )}
-        </div>
-        <div className="flex items-center gap-1 pr-2 no-drag">
-          <button className="btn btn-ghost" title={t('重新加载页面')} onClick={() => window.biodsh.dshReload()}><RefreshCw size={14} /></button>
-          <button className="btn btn-ghost" onClick={() => restartDsh()}>{t('重启智能体')}</button>
-          
         </div>
       </header>
       <div ref={areaRef} className="flex-1 min-h-0 relative" style={{ background: 'var(--surface)' }}>

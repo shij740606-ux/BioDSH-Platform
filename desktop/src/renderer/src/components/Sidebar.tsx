@@ -24,7 +24,7 @@ const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1
 const loadPins = (): string[] => { try { return JSON.parse(localStorage.getItem('biodsh.pins') ?? '[]'); } catch { return []; } };
 
 export default function Sidebar() {
-  const { tab, setTab, env, dsh, info, settings, platform, platformLogout, updateSettings, currentSession: current, setCurrentSession: setCurrent } = useApp();
+  const { tab, setTab, env, dsh, info, settings, platform, platformLogout, updateSettings, restartDsh, currentSession: current, setCurrentSession: setCurrent } = useApp();
   const offline = settings?.mode === 'offline';
   const { t, lang } = useT();
   const api = window.biodsh;
@@ -156,7 +156,10 @@ export default function Sidebar() {
       <div className={`drag h-[52px] flex items-center ${isMac ? 'pl-[84px]' : 'pl-4'} pr-3`}>
         <div className="flex items-center"><img className="bio-logo-light" src={wordmarkLight} alt="BioDSH" style={{ height: 20 }} draggable={false} /><img className="bio-logo-dark" src={wordmarkDark} alt="BioDSH" style={{ height: 20 }} draggable={false} /></div>
         <div className="flex-1" />
-        {!isMac && <div className="no-drag"><WindowControls compact /></div>}
+        <div className="no-drag flex items-center gap-1">
+          <button className="btn btn-ghost !px-2" title={t('重新加载页面')} onClick={() => window.biodsh.dshReload()}><RefreshCw size={14} /></button>
+          <button className="btn btn-ghost !px-2" onClick={() => restartDsh()}>{t('重启智能体')}</button>
+        </div>
       </div>
 
       <nav className="px-3 flex flex-col gap-[2px]">
