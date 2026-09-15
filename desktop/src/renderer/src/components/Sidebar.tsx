@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import wordmarkLight from '../assets/wordmark-light.png';
 import wordmarkDark from '../assets/wordmark-dark.png';
 import { SquarePen, Plus, Cpu, Store, Settings, Minus, Square, X, Folder, FolderPlus, GitBranch, GitCommitHorizontal, ChevronRight, ChevronDown, Wallet, MessageSquare, RefreshCw, Pin, Pencil, Archive, Share2, Trash2, FolderOpen, Sparkles, Loader2, Server, ListTodo, Library } from 'lucide-react';
@@ -23,12 +23,39 @@ function sessionTokens(s: SessionRow): number {
 const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 const loadPins = (): string[] => { try { return JSON.parse(localStorage.getItem('biodsh.pins') ?? '[]'); } catch { return []; } };
 
+type SidebarOrders = Record<string, string[]>;
+const loadOrders = (): SidebarOrders => { try { const value = JSON.parse(localStorage.getItem('biodsh.sidebar-orders.v1') || '{}'); return Object.fromEntries(Object.entries(value).filter(([, ids]) => Array.isArray(ids) && ids.every(id => typeof id === 'string'))) as SidebarOrders; } catch { return {}; } };
+function ordered<T>(items: T[], ids: string[], key: (item: T) => string): T[] {
+ const ranks = new Map(ids.map((id, index) => [id, index]));
+ return [...items].sort((a, b) => (ranks.get(key(a)) ?? ids.length) - (ranks.get(key(b)) ?? ids.length));
+}
 export default function Sidebar() {
   const { tab, setTab, env, dsh, info, settings, platform, platformLogout, updateSettings, restartDsh, currentSession: current, setCurrentSession: setCurrent } = useApp();
   const offline = settings?.mode === 'offline';
   const { t, lang } = useT();
   const api = window.biodsh;
   const isMac = info?.platform === 'darwin';
+  const [orders, setOrders] = useState<SidebarOrders>(loadOrders);
+  const dragSource = useRef<{ group: string; id: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const sortable = (group: string, id: string, ids: string[]) => ({
+    draggable: true,
+    onDragStart: (event: React.DragEvent) => { event.stopPropagation(); dragSource.current = {group, id}; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', id); },
+    onDragOver: (event: React.DragEvent) => { if (dragSource.current?.group !== group) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDropTarget(group + ':' + id); },
+    onDragLeave: () => setDropTarget(null),
+    onDragEnd: () => { dragSource.current = null; setDropTarget(null); },
+    onDrop: (event: React.DragEvent) => {
+      event.stopPropagation(); const source = dragSource.current;
+      if (!source || source.group !== group) return;
+      event.preventDefault(); dragSource.current = null; setDropTarget(null);
+      if (source.id === id) return;
+      const next = ids.filter(value => value !== source.id);
+      const rect = event.currentTarget.getBoundingClientRect();
+      next.splice(next.indexOf(id) + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0), 0, source.id);
+      setOrders(previous => { const value = {...previous, [group]: next}; try { localStorage.setItem('biodsh.sidebar-orders.v1', JSON.stringify(value)); } catch { toast('排序保存失败'); } return value; });
+    },
+    'data-sort-target': dropTarget === group + ':' + id ? 'true' : undefined,
+  });
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [sessions, setSessions] = useState<Record<string, SessionRow>>({});
   const [archived, setArchived] = useState<Set<string>>(new Set());
@@ -130,12 +157,12 @@ export default function Sidebar() {
     ] });
   };
 
-  const grouped = useMemo(() => workspaces.map((w) => {
+  const grouped = useMemo(() => ordered(workspaces, orders.projects || [], w => w.workspaceId).map((w) => {
     const rows = w.sessionIds.map((id) => sessions[id]).filter((s): s is SessionRow => !!s && !archived.has(s.sessionId)).sort((a, b) => b.updatedAt - a.updatedAt);
     let blankSeen = false;
     const dedup = rows.filter((s) => { if (!s.blank) return true; if (blankSeen) return false; blankSeen = true; return true; });
-    return { w, rows: [...dedup.filter((s) => pins.includes(s.sessionId)), ...dedup.filter((s) => !pins.includes(s.sessionId))] };
-  }), [workspaces, sessions, archived, pins]);
+    return { w, rows: ordered([...dedup.filter((s) => pins.includes(s.sessionId)), ...dedup.filter((s) => !pins.includes(s.sessionId))], orders["sessions:" + w.workspaceId] || [], s => s.sessionId) };
+  }), [workspaces, sessions, archived, pins, orders]);
 
   // 用量统计（token）：本对话 / 本项目 / 全部
   const usage = useMemo(() => {
@@ -163,16 +190,16 @@ export default function Sidebar() {
       </div>
 
       <nav className="px-3 flex flex-col gap-[2px]">
-        <button className="nav-item no-drag text-left" onClick={() => newSession()} disabled={busy || dsh.state !== 'running'}><SquarePen size={16} strokeWidth={2} /><span className="flex-1">{t('新对话')}</span></button>
-        {nav('data', t('分析'), Database)}
-        {nav('db', t('数据库'), Globe)}
-        {nav('knowledge', t('知识库'), Library)}
-        {nav('hosts', t('服务器管理'), Server)}
-        {platform.authenticated && nav('tasks', t('计算任务'), ListTodo)}
-        {platform.authenticated && nav('servers', t('计算服务器'), Server)}
-        {nav('env', t('分析环境'), Cpu, envDot ? <span className="inline-block w-[7px] h-[7px] rounded-full" style={{ background: envDot }} /> : undefined)}
-        {nav('store', t('技能商店'), Store)}
-        {nav('settings', t('更多'), Settings)}
+        {ordered([{id:'new', content: <button className="nav-item no-drag text-left" onClick={() => newSession()} disabled={busy || dsh.state !== 'running'}><SquarePen size={16} strokeWidth={2} /><span className="flex-1">{t('新对话')}</span></button>},
+{id:'data', content: nav('data', t('分析'), Database)},
+{id:'db', content: nav('db', t('数据库'), Globe)},
+{id:'knowledge', content: nav('knowledge', t('知识库'), Library)},
+{id:'hosts', content: nav('hosts', t('服务器管理'), Server)},
+{id:'tasks', content: platform.authenticated && nav('tasks', t('计算任务'), ListTodo)},
+{id:'servers', content: platform.authenticated && nav('servers', t('计算服务器'), Server)},
+{id:'env', content: nav('env', t('分析环境'), Cpu, envDot ? <span className="inline-block w-[7px] h-[7px] rounded-full" style={{ background: envDot }} /> : undefined)},
+{id:'store', content: nav('store', t('技能商店'), Store)},
+{id:'settings', content: nav('settings', t('更多'), Settings)}], orders.nav || [], item => item.id).map(item => item.content && <div key={item.id} {...sortable('nav', item.id, ordered(['new','data','db','knowledge','hosts','tasks','servers','env','store','settings'], orders.nav || [], id => id))}>{item.content}</div>)}
       </nav>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 mt-3">
@@ -188,7 +215,7 @@ export default function Sidebar() {
           const g = git[w.workspaceId]; const open = !collapsed[w.workspaceId];
           return (
             <div key={w.workspaceId} className="mb-1">
-              <div className="group flex items-center gap-1.5 h-[30px] px-2 rounded-lg hover:bg-[var(--fill)] cursor-default" onContextMenu={(e) => projectMenu(e, w)} onDoubleClick={() => newSession(w.workspaceId)}>
+              <div {...sortable('projects', w.workspaceId, grouped.map(item => item.w.workspaceId))} className="group flex items-center gap-1.5 h-[30px] px-2 rounded-lg hover:bg-[var(--fill)] cursor-default" onContextMenu={(e) => projectMenu(e, w)} onDoubleClick={() => newSession(w.workspaceId)}>
                 <button className="p-0.5" onClick={() => setCollapsed((c) => ({ ...c, [w.workspaceId]: open }))}>{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</button>
                 <Folder size={14} style={{ color: 'var(--accent)' }} />
                 <span className="t-body truncate flex-1" title={w.path}>{w.title || w.path.split(/[\\/]/).pop()}</span>
@@ -198,7 +225,7 @@ export default function Sidebar() {
               {open && rows.map((s) => {
                 const active = current === s.sessionId && tab === 'chat';
                 return (
-                  <button key={s.sessionId} className="w-full text-left flex items-center gap-2 h-[28px] pl-8 pr-2 rounded-lg" style={{ background: active ? 'var(--accent-soft)' : undefined, color: active ? 'var(--accent)' : undefined }} onClick={() => openSession(s.sessionId)} onContextMenu={(e) => sessionMenu(e, s, w)} onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--fill)'; }} onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = ''; }}>
+                  <button key={s.sessionId} {...sortable('sessions:' + w.workspaceId, s.sessionId, rows.map(row => row.sessionId))} className="w-full text-left flex items-center gap-2 h-[28px] pl-8 pr-2 rounded-lg" style={{ background: active ? 'var(--accent-soft)' : undefined, color: active ? 'var(--accent)' : undefined }} onClick={() => openSession(s.sessionId)} onContextMenu={(e) => sessionMenu(e, s, w)} onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--fill)'; }} onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLElement).style.background = ''; }}>
                     {pins.includes(s.sessionId) ? <Pin size={11} style={{ color: 'var(--orange)' }} /> : <MessageSquare size={12} style={{ color: s.running ? 'var(--green)' : active ? 'var(--accent)' : 'var(--text-3)' }} />}
                     <span className="t-body truncate flex-1" style={{ fontSize: 12.5, fontWeight: active ? 600 : 400 }}>{t(sessionTitle(s))}</span>
                     {sessionTokens(s) > 0 && <span className="t-caption" style={{ color: active ? 'var(--accent)' : 'var(--text-3)' }}>{fmtTokens(sessionTokens(s))}</span>}

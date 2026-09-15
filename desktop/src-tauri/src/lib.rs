@@ -769,7 +769,7 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<Window> {
     let window = builder.build()?;
     let size = window.inner_size()?.to_logical::<f64>(window.scale_factor()?);
     window.add_child(
-        tauri::webview::WebviewBuilder::new("ui", WebviewUrl::App("index.html".into())).auto_resize(),
+        tauri::webview::WebviewBuilder::new("ui", WebviewUrl::App("index.html".into())).disable_drag_drop_handler().auto_resize(),
         LogicalPosition::new(0.0, 0.0),
         LogicalSize::new(size.width, size.height),
     )?;
