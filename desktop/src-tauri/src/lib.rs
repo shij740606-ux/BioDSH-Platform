@@ -10,6 +10,8 @@ mod migrate;
 mod paths;
 mod platform_auth;
 mod knowledge;
+mod ssh_hosts;
+pub use ssh_hosts::run_mcp;
 mod pyenv;
 mod settings;
 mod skills;
@@ -236,6 +238,8 @@ fn settings_set(app: AppHandle, state: State<'_, AppState>, patch: serde_json::V
             match setter { 0 => s.image_base_url = v.trim().into(), 1 => s.image_model = v.trim().into(), _ => s.image_api_key = v.trim().into() }
         }
     }
+    if let Some(value) = patch.get("ragflowUrl").and_then(|v| v.as_str()) { s.ragflow_url = value.trim().into(); }
+    if let Some(value) = patch.get("ragflowMode").and_then(|v| v.as_str()).filter(|v| matches!(*v, "local" | "server")) { s.ragflow_mode = value.into(); }
     if let Some(arr) = patch.get("mcpServers") { if let Ok(list) = serde_json::from_value::<Vec<settings::McpServer>>(arr.clone()) { s.mcp_servers = list; } }
     if let Some(b) = patch.get("demosSeeded").and_then(|x| x.as_bool()) { s.demos_seeded = b; }
     let mut lang_changed = None;
@@ -314,6 +318,21 @@ fn platform_download_job_artifact(state: State<'_, AppState>, job_id: String, ar
 
 #[tauri::command]
 fn knowledge_credential() -> knowledge::CredentialStatus { knowledge::credential() }
+#[tauri::command]
+fn ssh_hosts_list(state: State<'_, AppState>) -> Result<Vec<ssh_hosts::Host>, String> { ssh_hosts::list(&state.paths.root) }
+#[tauri::command]
+fn ssh_hosts_save(state: State<'_, AppState>, draft: ssh_hosts::Draft) -> Result<Vec<ssh_hosts::Host>, String> { ssh_hosts::save(&state.paths.root, draft) }
+#[tauri::command]
+fn ssh_hosts_remove(state: State<'_, AppState>, id: String) -> Result<Vec<ssh_hosts::Host>, String> { ssh_hosts::remove(&state.paths.root, &id) }
+#[tauri::command]
+fn ssh_hosts_select(state: State<'_, AppState>, id: String, selected: bool) -> Result<Vec<ssh_hosts::Host>, String> { ssh_hosts::select(&state.paths.root, &id, selected) }
+#[tauri::command]
+fn ssh_hosts_trust(state: State<'_, AppState>, id: String, host_key: String, fingerprint: String) -> Result<Vec<ssh_hosts::Host>, String> { ssh_hosts::trust(&state.paths.root, &id, &host_key, &fingerprint) }
+#[tauri::command]
+async fn ssh_hosts_test(app: AppHandle, state: State<'_, AppState>, id: String, probe: bool) -> Result<serde_json::Value, String> {
+    let root = state.paths.root.clone(); let node = paths::node_binary(&app); let script = paths::resource(&app, "ssh").join("client.cjs");
+    tauri::async_runtime::spawn_blocking(move || ssh_hosts::call(&root, &node, &script, &id, if probe { "probe" } else { "test" }, "", 20, false)).await.map_err(|e| e.to_string())?
+}
 #[tauri::command]
 fn knowledge_set_credential(key: String) -> Result<knowledge::CredentialStatus, String> { knowledge::set_credential(&key) }
 #[tauri::command]
@@ -790,6 +809,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
             knowledge_credential, knowledge_set_credential, knowledge_datasets, knowledge_create_dataset, knowledge_documents, knowledge_add_files, knowledge_folders, knowledge_add_folder, knowledge_remove_folder, knowledge_sync_folders, knowledge_search,
+            ssh_hosts_list, ssh_hosts_save, ssh_hosts_remove, ssh_hosts_select, ssh_hosts_trust, ssh_hosts_test,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
             skills_catalog, skills_statuses, skills_readme, skills_install, skills_uninstall,
             open_path, open_external, pick_folder, window_control, client_log, deepseek_balance, git_status, git_init, git_commit, dsh_rpc, dsh_open_session, dsh_new_session, check_updates, assistant_ask, session_export, workspace_files, read_workspace_image, ratings_get, ratings_set, session_delete, env_install_extra, migrate_scan, migrate_import, refdata_list, refdata_install, refdata_remove, demos_seed, dsh_set_context

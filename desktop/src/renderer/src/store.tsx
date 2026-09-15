@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import type { AppSettings, CatalogSkill, CredentialStatus, DshStatus, EnvStatus, PlatformSession, SkillStatus } from '@shared/types';
 
-export type Tab = 'chat' | 'data' | 'db' | 'knowledge' | 'tasks' | 'servers' | 'store' | 'env' | 'settings';
+export type Tab = 'chat' | 'data' | 'db' | 'knowledge' | 'hosts' | 'tasks' | 'servers' | 'store' | 'env' | 'settings';
 
 interface AppState {
   ready: boolean;

@@ -154,7 +154,7 @@ impl DshManager {
             let src = fs::read_to_string(preset_src.join("agent.cordis.yml")).ok()?;
             let coding = "      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.";
             if !src.contains(coding) { return None; }
-            let persona_yaml = PERSONA.lines().map(|l| if l.is_empty() { String::new() } else { format!("      {l}") }).collect::<Vec<_>>().join("\n");
+            let persona_yaml = PERSONA.lines().chain(std::iter::once("SSH server access: the user manages personal SSH hosts in 服务器管理. Use mcp__biodsh_ssh__list_servers to discover only user-selected hosts, then mcp__biodsh_ssh__execute with the server ID. Never read credential stores, request passwords/private keys, or include credentials in prompts. Remote commands run on the chosen server; protect original data and confirm destructive operations with the user.")).map(|l| if l.is_empty() { String::new() } else { format!("      {l}") }).collect::<Vec<_>>().join("\n");
             let composed = format!("# biodsh-preset v1 — 由 BioDSH 桌面版自动生成（每次启动重建，请勿手改）\n{}", src.replace(coding, &persona_yaml));
             let dir = home.join(".agent-presets").join("biodsh");
             fs::create_dir_all(&dir).ok()?;
@@ -168,7 +168,7 @@ impl DshManager {
         let marker = |v: &str| existing.contains(&format!("# biodsh-minimal {v}"));
         if !patch.exists() || marker("v1") || marker("v2") || marker("v3") || marker("v4") || marker("v5") {
             let mut body: Vec<String> = MINIMAL_PLUGINS.iter().map(|id| format!("- id: {id}\n  disabled: true")).collect();
-            let persona_yaml = PERSONA.lines().map(|l| if l.is_empty() { String::new() } else { format!("      {l}") }).collect::<Vec<_>>().join("\n");
+            let persona_yaml = PERSONA.lines().chain(std::iter::once("SSH server access: the user manages personal SSH hosts in 服务器管理. Use mcp__biodsh_ssh__list_servers to discover only user-selected hosts, then mcp__biodsh_ssh__execute with the server ID. Never read credential stores, request passwords/private keys, or include credentials in prompts. Remote commands run on the chosen server; protect original data and confirm destructive operations with the user.")).map(|l| if l.is_empty() { String::new() } else { format!("      {l}") }).collect::<Vec<_>>().join("\n");
             body.push(format!("- id: system-prompt\n  config:\n    persona: >-\n{persona_yaml}"));
             if preset_ok {
                 body.push("- id: agent-presets\n  config:\n    default: biodsh".into());
@@ -203,7 +203,19 @@ impl DshManager {
     /// `extra_env`：额外注入给 dsh 子进程的环境变量（图像生成接口等）；`mcp`：写进 patch 的 MCP 服务。
     pub fn start_with(self: &Arc<Self>, app: &AppHandle, paths: &AppPaths, workspace: &str, offline_key: Option<String>, extra_env: Vec<(String, String)>, mcp: &[crate::settings::McpServer]) -> DshStatus {
         if self.child.lock().unwrap().is_some() { return self.status.lock().unwrap().clone(); }
-        Self::ensure_home(paths, workspace, &crate::paths::resource(app, "dsh/node_modules").join("@deepseek-ai").join("dsh").join("config").join("agent-presets").join("standard"), mcp);
+        let mut mcp = mcp.to_vec();
+        mcp.retain(|server| server.name != "biodsh_ssh");
+        if let Ok(executable) = std::env::current_exe() {
+            mcp.push(crate::settings::McpServer {
+                name: "biodsh_ssh".into(), transport: "stdio".into(), command: executable.to_string_lossy().into_owned(),
+                args: vec!["--ssh-mcp".into()], env: std::collections::BTreeMap::from([
+                    ("BIODSH_HOME".into(), paths.root.to_string_lossy().into_owned()),
+                    ("BIODSH_SSH_NODE".into(), crate::paths::node_binary(app).to_string_lossy().into_owned()),
+                    ("BIODSH_SSH_SCRIPT".into(), crate::paths::resource(app, "ssh").join("client.cjs").to_string_lossy().into_owned()),
+                ]), ..Default::default()
+            });
+        }
+        Self::ensure_home(paths, workspace, &crate::paths::resource(app, "dsh/node_modules").join("@deepseek-ai").join("dsh").join("config").join("agent-presets").join("standard"), &mcp);
         crate::settings::migrate_credentials(paths);
         ensure_sitecustomize(&paths.bioenv);
         *self.status.lock().unwrap() = DshStatus { state: "starting".into(), ..Default::default() };

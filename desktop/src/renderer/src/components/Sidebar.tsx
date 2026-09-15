@@ -167,6 +167,7 @@ export default function Sidebar() {
         {nav('data', t('分析'), Database)}
         {nav('db', t('数据库'), Globe)}
         {nav('knowledge', t('知识库'), Library)}
+        {nav('hosts', t('服务器管理'), Server)}
         {platform.authenticated && nav('tasks', t('计算任务'), ListTodo)}
         {platform.authenticated && nav('servers', t('计算服务器'), Server)}
         {nav('env', t('分析环境'), Cpu, envDot ? <span className="inline-block w-[7px] h-[7px] rounded-full" style={{ background: envDot }} /> : undefined)}

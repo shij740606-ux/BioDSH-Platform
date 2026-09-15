@@ -229,6 +229,16 @@ export interface KnowledgeFolder {
 }
 export interface KnowledgeSyncResult { uploaded: number; skipped: number; failed: number }
 
+export interface SshHost {
+  id: string; name: string; host: string; port: number; username: string;
+  auth: 'password' | 'key'; selected: boolean; fingerprint?: string; hostKey?: string;
+}
+export interface SshHostDraft {
+  id?: string; name: string; host: string; port: number; username: string;
+  auth: 'password' | 'key'; password?: string; privateKey?: string; passphrase?: string;
+}
+export interface SshProbe { fingerprint: string; hostKey: string; connected?: boolean }
+
 export interface McpServer {
   name: string;
   transport: 'stdio' | 'streamable-http';

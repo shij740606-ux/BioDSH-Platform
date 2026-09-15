@@ -12,6 +12,7 @@ import LoginView from './views/LoginView';
 import ServersView from './views/ServersView';
 import TasksView from './views/TasksView';
 import KnowledgeView from './views/KnowledgeView';
+import HostsView from './views/HostsView';
 import AskPopover from './components/AskPopover';
 import AutoUpdate from './components/AutoUpdate';
 import StarPrompt from './components/StarPrompt';
@@ -43,6 +44,7 @@ function Shell() {
         {tab === 'data' && <DataView />}
         {tab === 'db' && <DatabaseView />}
         {tab === 'knowledge' && <KnowledgeView />}
+        {tab === 'hosts' && <HostsView />}
         {tab === 'tasks' && <TasksView />}
         {tab === 'servers' && <ServersView />}
         {tab === 'store' && <StoreView />}

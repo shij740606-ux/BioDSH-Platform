@@ -1,6 +1,7 @@
 .DS_Store
 *.log
 node_modules/
+desktop/resources/ssh/.stage-lock
 platform/.venv/
 .uv-cache/
 .npm-cache/

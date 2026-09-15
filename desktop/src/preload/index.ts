@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession, KnowledgeCitation, KnowledgeCredentialStatus, KnowledgeDataset, KnowledgeDocument, KnowledgeFolder, KnowledgeSyncResult } from '../shared/types';
 
 const api = {
+  sshHosts: (): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
+  sshHostSave: (_draft: import('../shared/types').SshHostDraft): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
+  sshHostRemove: (_id: string): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
+  sshHostSelect: (_id: string, _selected: boolean): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
+  sshHostTrust: (_id: string, _hostKey: string, _fingerprint: string): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
+  sshHostTest: (_id: string, _probe = true): Promise<import('../shared/types').SshProbe> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
   appInfo: () => ipcRenderer.invoke('app:info'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke('settings:set', patch),

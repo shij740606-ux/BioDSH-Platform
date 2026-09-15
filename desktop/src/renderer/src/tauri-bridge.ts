@@ -7,6 +7,12 @@ import type { AppSettings, IpcEvent, Rect } from '@shared/types';
 export function installTauriBridge() {
   const api = {
     mode: 'tauri' as const,
+    sshHosts: () => invoke('ssh_hosts_list'),
+    sshHostSave: (draft: import('@shared/types').SshHostDraft) => invoke('ssh_hosts_save', { draft }),
+    sshHostRemove: (id: string) => invoke('ssh_hosts_remove', { id }),
+    sshHostSelect: (id: string, selected: boolean) => invoke('ssh_hosts_select', { id, selected }),
+    sshHostTrust: (id: string, hostKey: string, fingerprint: string) => invoke('ssh_hosts_trust', { id, hostKey, fingerprint }),
+    sshHostTest: (id: string, probe = true) => invoke('ssh_hosts_test', { id, probe }),
     appInfo: () => invoke('app_info'),
     getSettings: () => invoke('settings_get'),
     setSettings: (patch: Partial<AppSettings>) => invoke('settings_set', { patch }),

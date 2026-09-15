@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist-tauri",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npx vite --config vite.tauri.config.ts",
-    "beforeBuildCommand": "npx vite build --config vite.tauri.config.ts"
+    "beforeDevCommand": "node scripts/stage-ssh.mjs && npx vite --config vite.tauri.config.ts",
+    "beforeBuildCommand": "node scripts/stage-ssh.mjs && npx vite build --config vite.tauri.config.ts"
   },
   "app": {
     "withGlobalTauri": false,
@@ -37,6 +37,7 @@
       "../resources/skills": "skills",
       "../resources/demos": "demos",
       "../resources/scripts": "scripts",
+      "../resources/ssh": "ssh",
       "../resources/community-skills": "community-skills",
       "../resources/bioenv": "bioenv",
       "../dsh-runtime/node_modules": "dsh/node_modules"
