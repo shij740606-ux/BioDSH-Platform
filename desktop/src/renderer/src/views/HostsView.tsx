@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check, KeyRound, Loader2, Pencil, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react';
-import type { SshHost, SshHostDraft, SshProbe } from '@shared/types';
+import type { SshHost, SshHostDraft, SshProbe, SshMetrics } from '@shared/types';
 import { useApp } from '../store';
 import { useT } from '../i18n';
 
@@ -11,6 +11,22 @@ export default function HostsView() {
   const { currentSession, setTab } = useApp();
   const api = window.biodsh;
   const [hosts, setHosts] = useState<SshHost[]>([]);
+  const [metrics, setMetrics] = useState<Record<string, SshMetrics>>({});
+  const [resourceBusy, setResourceBusy] = useState<Record<string, boolean>>({});
+  const [resourceErrors, setResourceErrors] = useState<Record<string, string>>({});
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const query = async (id: string) => {
+    if (resourceBusy[id]) return;
+    setResourceBusy(value => ({ ...value, [id]: true })); setResourceErrors(value => ({ ...value, [id]: '' }));
+    try { const value = await api.sshHostMetrics(id); setMetrics(previous => ({ ...previous, [id]: value })); }
+    catch (reason) { setResourceErrors(value => ({ ...value, [id]: String(reason).slice(0, 300) })); }
+    finally { setResourceBusy(value => ({ ...value, [id]: false })); }
+  };
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const timer = window.setInterval(() => { hosts.filter(host => host.hostKey).forEach(host => { void query(host.id); }); }, 30000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, hosts, resourceBusy]);
   const [draft, setDraft] = useState<SshHostDraft>(blank);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -55,6 +71,7 @@ export default function HostsView() {
     <header className="drag h-[52px] flex items-center pl-5 hairline-b"><span className="t-title2">{t('服务器管理')}</span></header>
     <div className="flex-1 overflow-y-auto p-5"><div className="max-w-[1180px] mx-auto flex flex-col gap-4">
       <div className="flex flex-wrap gap-3 items-center"><div className="flex-1"><div className="t-title2">{t('我的 SSH 服务器')}</div><div className="t-caption mt-1">{t('添加连接信息，选择允许智能体使用的服务器。')}</div></div><button className="btn btn-primary" disabled={busy} onClick={() => edit()}><Plus size={14} />{t('添加服务器')}</button></div>
+      <div className="flex flex-wrap items-center gap-3"><button className="btn btn-ghost" onClick={() => hosts.filter(host => host.hostKey).forEach(host => { void query(host.id); })}>刷新全部资源</button><label className="t-caption flex gap-2 items-center"><input type="checkbox" checked={autoRefresh} onChange={event => setAutoRefresh(event.target.checked)} />每 30 秒自动刷新（页面打开期间）</label><span className="t-caption">Linux · Python 3 · 无需安装监控服务</span></div>
       {error && <div role="alert" className="card p-3" style={{ color: 'var(--red)' }}>{error}</div>}
       {notice && <div role="status" className="card p-3 flex items-center gap-2" style={{ color: 'var(--green)' }}><Check size={16} />{notice}</div>}
       {pending && <div className="card p-4 flex flex-col gap-3"><div className="t-headline">{pending.host.hostKey ? t('服务器主机指纹已变化') : t('首次连接：确认主机指纹')}</div><div>{pending.host.name} · {pending.host.host}:{pending.host.port}</div><code className="break-all">{pending.probe.fingerprint}</code><div className="t-caption">{t('请与服务器管理员核对指纹。确认后才会发送登录凭据。')}</div><div className="flex gap-2"><button className="btn btn-primary" disabled={busy} onClick={() => void trust()}>{t('信任此主机并测试连接')}</button><button className="btn btn-ghost" disabled={busy} onClick={() => setPending(null)}>{t('取消')}</button></div></div>}
@@ -64,6 +81,9 @@ export default function HostsView() {
           <div className="flex gap-2 t-caption items-center"><KeyRound size={13} />{host.auth === 'password' ? t('密码认证') : t('私钥认证')}{host.fingerprint && <ShieldCheck size={14} style={{ color: 'var(--green)' }} />}</div>
           <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={host.selected} disabled={busy || !host.hostKey} onChange={event => { const selected = event.target.checked; void run(async () => { setHosts(await api.sshHostSelect(host.id, selected)); }); }} />{t('允许智能体使用')}</label>
           <div className="flex gap-2"><button className="btn btn-ghost flex-1" disabled={busy} onClick={() => void test(host)}>{t('测试连接')}</button><button aria-label={t('删除服务器')} className="btn btn-ghost !px-2" disabled={busy} onClick={() => { if (window.confirm(t('删除连接配置？服务器上的文件不会被删除。'))) void run(async () => { setHosts(await api.sshHostRemove(host.id)); if (draft.id === host.id) { setDraft(blank()); setEditing(false); } }); }}><Trash2 size={14} /></button></div>
+          <button className="btn btn-ghost" disabled={!host.hostKey || resourceBusy[host.id]} onClick={() => void query(host.id)}>{resourceBusy[host.id] ? '正在查询资源…' : '查询 / 刷新资源'}</button>
+          {resourceErrors[host.id] && <div role="alert" className="t-caption break-words" style={{ color: 'var(--red)' }}>{resourceErrors[host.id]}</div>}
+          {metrics[host.id] && <ResourceSummary value={metrics[host.id]} />}
         </div>)}</div>{hosts.length === 0 && <div className="card p-10 text-center"><Server size={32} className="mx-auto mb-3" /><div className="t-headline">{t('还没有服务器')}</div><div className="t-caption mt-2">{t('填写名字、IP、端口和登录方式即可添加。')}</div></div>}
         <div className="card p-4 mt-4 flex flex-col gap-3"><div className="t-headline">{t('智能体连接范围')} · {hosts.filter(host => host.selected).length}</div><div className="t-caption">{t('勾选可同时使用多台服务器。取消勾选后，智能体不能再建立新的连接；已启动的远程任务不会自动停止。')}</div><button className="btn btn-primary self-start" disabled={busy || !hosts.some(host => host.selected)} onClick={() => void ask()}>{t('在对话中使用所选服务器')}</button></div></div>
         {editing && <form className="card p-4 flex flex-col gap-3 self-start" onSubmit={event => { event.preventDefault(); void save(); }}>
@@ -79,4 +99,24 @@ export default function HostsView() {
       </div>
     </div></div>
   </div>;
+}
+
+const bytes = (value: number) => value >= 1073741824 ? (value / 1073741824).toFixed(1) + ' GiB' : (value / 1048576).toFixed(1) + ' MiB';
+function ResourceSummary({ value: m }: { value: SshMetrics }) {
+ const meter = (name: string, used: number, total: number, text: string) => <div className="flex flex-col gap-1"><div className="flex justify-between gap-2 t-caption"><span>{name}</span><span>{text}</span></div><progress className="w-full h-2" style={{ accentColor: 'var(--accent)' }} max={total || 1} value={used} /></div>;
+ return <div className="flex flex-col gap-3 pt-3 hairline-t">
+  <div className="t-caption">更新于 {new Date(m.sampledAt * 1000).toLocaleTimeString()}</div>
+  {meter('CPU 占用', m.cpuPercent || 0, 100, m.cpuPercent === null ? '不可用' : m.cpuPercent + '%')}
+  <div className="t-caption">逻辑核数：{m.logicalCores} · 物理核数：{m.physicalCores ?? '不可用'}</div>
+  {meter('内存', m.memoryUsed, m.memoryTotal, bytes(m.memoryUsed) + ' / ' + bytes(m.memoryTotal))}
+  {m.swapTotal > 0 && meter('交换内存', m.swapUsed, m.swapTotal, bytes(m.swapUsed) + ' / ' + bytes(m.swapTotal))}
+  <details><summary className="cursor-pointer t-caption">系统、磁盘、网络与 GPU 详情</summary><div className="flex flex-col gap-3 mt-3 t-caption break-words">
+   <div>{m.hostname} · {m.system} · {m.architecture}</div><div>CPU：{m.cpuModel}</div>
+   <div>负载（1 / 5 / 15 分钟）：{m.load.map(v => v.toFixed(2)).join(' / ')}</div>
+   <div>运行时长：{(m.uptimeSeconds / 86400).toFixed(1)} 天</div>
+   {m.disks.map(d => <div key={d.mount}>{meter('磁盘 ' + d.mount, d.used, d.total, bytes(d.used) + ' / ' + bytes(d.total))}<div>可用：{bytes(d.free)}</div></div>)}
+   {m.network.map(n => <div key={n.name}>{n.name} · 累计接收 {bytes(n.received)} · 累计发送 {bytes(n.sent)}</div>)}
+   <div>GPU（名称 / 使用率 % / 显存总量 MiB / 已用 MiB / 温度 °C）：<pre className="whitespace-pre-wrap mt-1">{m.gpu || '未检测到可查询的 NVIDIA GPU'}</pre></div>
+  </div></details>
+ </div>;
 }

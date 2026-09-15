@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession, KnowledgeCitation, KnowledgeCredentialStatus, KnowledgeDataset, KnowledgeDocument, KnowledgeFolder, KnowledgeSyncResult } from '../shared/types';
 
 const api = {
+  sshHostMetrics: (_id: string): Promise<import('../shared/types').SshMetrics> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
   sshHosts: (): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
   sshHostSave: (_draft: import('../shared/types').SshHostDraft): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),
   sshHostRemove: (_id: string): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('服务器管理需要使用 Tauri 桌面版')),

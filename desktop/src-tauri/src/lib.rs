@@ -334,6 +334,17 @@ async fn ssh_hosts_test(app: AppHandle, state: State<'_, AppState>, id: String, 
     tauri::async_runtime::spawn_blocking(move || ssh_hosts::call(&root, &node, &script, &id, if probe { "probe" } else { "test" }, "", 20, false)).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn ssh_hosts_metrics(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<serde_json::Value, String> {
+    let root = state.paths.root.clone(); let node = paths::node_binary(&app); let script = paths::resource(&app, "ssh").join("client.cjs");
+    let source = std::fs::read_to_string(paths::resource(&app, "ssh").join("metrics.py")).map_err(|e| e.to_string())?;
+    let command = format!("if command -v python3 >/dev/null 2>&1; then py=python3; elif command -v python >/dev/null 2>&1; then py=python; else echo '需要 Python 3 才能查询资源' >&2; exit 1; fi; \"$py\" - <<'BIODSH_METRICS'\n{}\nBIODSH_METRICS", source);
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = ssh_hosts::call(&root, &node, &script, &id, "execute", &command, 20, false)?;
+        if result["exitCode"].as_i64() != Some(0) { return Err(format!("资源查询失败：{}", result["stderr"].as_str().unwrap_or("未知错误"))); }
+        serde_json::from_str(result["stdout"].as_str().unwrap_or("")).map_err(|_| "服务器返回的资源数据无效".into())
+    }).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
 fn knowledge_set_credential(key: String) -> Result<knowledge::CredentialStatus, String> { knowledge::set_credential(&key) }
 #[tauri::command]
 async fn knowledge_datasets(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
@@ -809,7 +820,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
             knowledge_credential, knowledge_set_credential, knowledge_datasets, knowledge_create_dataset, knowledge_documents, knowledge_add_files, knowledge_folders, knowledge_add_folder, knowledge_remove_folder, knowledge_sync_folders, knowledge_search,
-            ssh_hosts_list, ssh_hosts_save, ssh_hosts_remove, ssh_hosts_select, ssh_hosts_trust, ssh_hosts_test,
+            ssh_hosts_list, ssh_hosts_save, ssh_hosts_remove, ssh_hosts_select, ssh_hosts_trust, ssh_hosts_test, ssh_hosts_metrics,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
             skills_catalog, skills_statuses, skills_readme, skills_install, skills_uninstall,
             open_path, open_external, pick_folder, window_control, client_log, deepseek_balance, git_status, git_init, git_commit, dsh_rpc, dsh_open_session, dsh_new_session, check_updates, assistant_ask, session_export, workspace_files, read_workspace_image, ratings_get, ratings_set, session_delete, env_install_extra, migrate_scan, migrate_import, refdata_list, refdata_install, refdata_remove, demos_seed, dsh_set_context

@@ -264,3 +264,11 @@ export type IpcEvent =
   | { type: 'skills'; statuses: SkillStatus[] }
   | { type: 'skill-progress'; id: string; message: string }
   | { type: 'refdata'; id: string; received: number; total: number; done?: boolean };
+
+export interface SshMetrics {
+ sampledAt: number; hostname: string; system: string; architecture: string; cpuModel: string;
+ logicalCores: number; physicalCores: number | null; cpuPercent: number | null; load: number[]; uptimeSeconds: number;
+ memoryTotal: number; memoryUsed: number; swapTotal: number; swapUsed: number;
+ disks: { mount: string; total: number; used: number; free: number }[];
+ network: { name: string; received: number; sent: number }[]; gpu: string | null;
+}
