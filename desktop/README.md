@@ -22,6 +22,8 @@
 
 ## 开发
 
+直接更新本机已安装程序时，使用 `npm run tauri:build:app` 生成 `src-tauri/target/release/biodsh-desktop.exe`。不要用裸 `cargo build --release` 替代：Tauri CLI 会启用 `tauri/custom-protocol`，将生产界面内嵌到程序；遗漏这个选项会使窗口尝试连接没有启动的 localhost 开发服务。
+
 ```bash
 cd desktop
 npm i                       # 依赖（.npmrc 已指向 npmmirror）
