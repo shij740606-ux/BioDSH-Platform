@@ -9,6 +9,7 @@ static WRITE_LOCK: Mutex<()> = Mutex::new(());
 #[serde(rename_all = "camelCase")]
 pub struct Host {
     pub id: String, pub name: String, pub host: String, pub port: u16, pub username: String,
+    #[serde(default)] pub worker_node_id: Option<String>,
     pub auth: String, pub selected: bool, pub fingerprint: Option<String>, pub host_key: Option<String>,
 }
 #[derive(Deserialize)]
@@ -94,7 +95,7 @@ pub fn save(root: &Path, draft: Draft) -> Result<Vec<Host>, String> {
     if let Some(value) = draft.passphrase { credentials.passphrase = value; }
     if (draft.auth == "password" && credentials.password.is_empty()) || (draft.auth == "key" && credentials.private_key.is_empty()) { return Err("请填写所选认证方式的密码或私钥".into()); }
     let same_endpoint = existing.as_ref().is_some_and(|h| h.host == draft.host.trim() && h.port == draft.port);
-    let host = Host { id: id.clone(), name: draft.name.trim().into(), host: draft.host.trim().into(), port: draft.port,
+    let host = Host { worker_node_id: existing.as_ref().filter(|_| same_endpoint).and_then(|h| h.worker_node_id.clone()), id: id.clone(), name: draft.name.trim().into(), host: draft.host.trim().into(), port: draft.port,
         username: draft.username.trim().into(), selected: existing.as_ref().is_some_and(|h| h.selected && h.username == draft.username.trim() && h.auth == draft.auth) && same_endpoint, auth: draft.auth,
         fingerprint: existing.as_ref().filter(|_| same_endpoint).and_then(|h| h.fingerprint.clone()),
         host_key: existing.as_ref().filter(|_| same_endpoint).and_then(|h| h.host_key.clone()) };
@@ -179,7 +180,7 @@ mod tests {
     #[test]
     fn agent_cannot_connect_to_an_unselected_host() {
         let root = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        persist(&root, &[Host { id:"test".into(),name:"test".into(),host:"127.0.0.1".into(),port:22,username:"test".into(),auth:"password".into(),selected:false,fingerprint:None,host_key:None }]).unwrap();
+        persist(&root, &[Host { worker_node_id:None,id:"test".into(),name:"test".into(),host:"127.0.0.1".into(),port:22,username:"test".into(),auth:"password".into(),selected:false,fingerprint:None,host_key:None }]).unwrap();
         assert!(call(&root, Path::new("missing"), Path::new("missing"), "test", "execute", "whoami", 5, true).unwrap_err().contains("未被用户选择"));
         assert!(select(&root,"test",true).is_err());
         fs::remove_dir_all(root).unwrap();
@@ -195,4 +196,11 @@ mod tests {
         delete_parts(&id, &item.get_password().unwrap()); let _ = item.delete_credential();
         assert_eq!(loaded.password, value.password); assert_eq!(loaded.private_key, value.private_key);
     }
+}
+
+pub fn bind(root: &Path, id: &str, node_id: Option<String>) -> Result<Vec<Host>, String> {
+    let _guard = WRITE_LOCK.lock().map_err(|_| "保存锁不可用")?;
+    let mut hosts = list(root)?;
+    let host = hosts.iter_mut().find(|h| h.id == id).ok_or("服务器不存在")?;
+    host.worker_node_id = node_id; persist(root, &hosts)?; Ok(hosts)
 }

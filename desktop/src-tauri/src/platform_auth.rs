@@ -359,6 +359,7 @@ pub fn create_job(
         "project_id": input["projectId"], "kind": input["kind"],
         "payload": { "arguments": input["arguments"] },
         "requested_resources": input["requestedResources"],
+        "node_ids": input["nodeIds"],
         "priority": input.get("priority").cloned().unwrap_or(serde_json::json!(0))
     });
     Ok(normalize_job(&post_with_refresh(
@@ -452,4 +453,11 @@ pub fn logout(configured_url: &str) -> serde_json::Value {
     }
     clear();
     serde_json::json!({ "authenticated": false, "projects": [] })
+}
+
+pub fn scheduling_nodes(url: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(url)?; get_with_refresh(&mut session, "/scheduling/nodes")
+}
+pub fn scheduling(url: &str, id: &str) -> Result<serde_json::Value, String> {
+    let mut session = configured_session(url)?; get_with_refresh(&mut session, &format!("/jobs/{id}/scheduling"))
 }

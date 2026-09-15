@@ -43,6 +43,7 @@ def test_worker_executes_profile_streams_log_and_uploads_result(
         "from pathlib import Path; "
         "Path('results').mkdir(); "
         "Path('results/out.txt').write_text('ok'); "
+        "import os; print('GPU=' + os.environ.get('CUDA_VISIBLE_DEVICES', 'missing'), flush=True); "
         "print('analysis complete', flush=True)"
     )
     executors = {
@@ -67,10 +68,37 @@ def test_worker_executes_profile_streams_log_and_uploads_result(
             "id": "job-1",
             "kind": "test",
             "attempt": 1,
-            "payload": {"arguments": []},
+            "payload": {"arguments": [], "_allocation": {"gpu_indices": ["2"]}},
         },
     )
+    assert "GPU=2" in logs
     assert "analysis complete" in logs
     assert completed[0]["status"] == "succeeded"
     assert completed[0]["exit_code"] == 0
     assert completed[0]["result_manifest"]["artifacts"][0]["relative_path"] == "results/out.txt"
+
+
+def test_worker_rechecks_resources_before_start(tmp_path, monkeypatch):
+    import pytest
+
+    monkeypatch.setattr(
+        worker,
+        "collect_metric",
+        lambda *_: dict(
+            memory_total_bytes=100,
+            memory_used_bytes=99,
+            disk_total_bytes=100,
+            disk_used_bytes=0,
+            gpus=[],
+        ),
+    )
+    settings = worker.WorkerSettings(metric_path=tmp_path, workspace_root=tmp_path / "jobs")
+    with pytest.raises(RuntimeError, match="Resources changed"):
+        worker.execute_job(
+            settings,
+            {},
+            {"cpu_logical": 16},
+            {},
+            dict(kind="test", requested_resources={"memory_bytes": 50}),
+        )
+    assert not settings.workspace_root.exists()

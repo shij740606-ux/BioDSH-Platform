@@ -165,6 +165,7 @@ class NodeEnrollment(ApiModel):
 
 
 class JobCreate(WriteModel):
+    node_ids: list[str] | None = Field(default=None, min_length=1, max_length=200)
     project_id: str
     kind: str = Field(min_length=1, max_length=120)
     payload: dict[str, Any] = Field(default_factory=dict)

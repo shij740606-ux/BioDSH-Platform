@@ -6,6 +6,9 @@ import type { AppSettings, IpcEvent, Rect } from '@shared/types';
 
 export function installTauriBridge() {
   const api = {
+    platformSchedulingNodes: () => invoke('platform_scheduling_nodes'),
+    platformScheduling: (jobId: string) => invoke('platform_scheduling', {jobId}),
+    sshHostBind: (id: string, nodeId: string | null) => invoke('ssh_hosts_bind', {id, nodeId}),
     mode: 'tauri' as const,
     sshHostMetrics: (id: string) => invoke('ssh_hosts_metrics', { id }),
     sshHosts: () => invoke('ssh_hosts_list'),

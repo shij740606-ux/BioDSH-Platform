@@ -181,6 +181,7 @@ export interface PlatformJobArtifact {
   createdAt: string;
 }
 export interface PlatformJobCreate {
+  nodeIds?: string[];
   projectId: string;
   kind: string;
   arguments: string[];
@@ -231,7 +232,7 @@ export interface KnowledgeSyncResult { uploaded: number; skipped: number; failed
 
 export interface SshHost {
   id: string; name: string; host: string; port: number; username: string;
-  auth: 'password' | 'key'; selected: boolean; fingerprint?: string; hostKey?: string;
+  workerNodeId?: string; auth: 'password' | 'key'; selected: boolean; fingerprint?: string; hostKey?: string;
 }
 export interface SshHostDraft {
   id?: string; name: string; host: string; port: number; username: string;
@@ -272,3 +273,6 @@ export interface SshMetrics {
  disks: { mount: string; total: number; used: number; free: number }[];
  network: { name: string; received: number; sent: number }[]; gpu: string | null;
 }
+
+export interface SchedulingNode { id: string; name: string; hostname: string; status: string }
+export interface SchedulingDecision { selected_node_id: string | null; reason: string; nodes: {node_id: string; name: string; eligible: boolean; reason: string; cpu_free: number; memory_free: number; reserved_cpu: number}[] }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Check, KeyRound, Loader2, Pencil, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react';
-import type { SshHost, SshHostDraft, SshProbe, SshMetrics } from '@shared/types';
+import type { SshHost, SshHostDraft, SshProbe, SshMetrics, SchedulingNode } from '@shared/types';
 import { useApp } from '../store';
 import { useT } from '../i18n';
 
@@ -8,8 +8,10 @@ const blank = (): SshHostDraft => ({ name: '', host: '', port: 22, username: '',
 
 export default function HostsView() {
   const { t } = useT();
-  const { currentSession, setTab } = useApp();
+  const { currentSession, setTab, settings } = useApp();
   const api = window.biodsh;
+  const [nodes, setNodes] = useState<SchedulingNode[]>([]);
+  useEffect(() => { if (settings?.platformUrl) void api.platformSchedulingNodes().then(setNodes).catch(reason => setError(String(reason).slice(0,200))); }, [settings?.platformUrl]);
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [metrics, setMetrics] = useState<Record<string, SshMetrics>>({});
   const [resourceBusy, setResourceBusy] = useState<Record<string, boolean>>({});
@@ -81,6 +83,8 @@ export default function HostsView() {
           <div className="flex gap-2 t-caption items-center"><KeyRound size={13} />{host.auth === 'password' ? t('密码认证') : t('私钥认证')}{host.fingerprint && <ShieldCheck size={14} style={{ color: 'var(--green)' }} />}</div>
           <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={host.selected} disabled={busy || !host.hostKey} onChange={event => { const selected = event.target.checked; void run(async () => { setHosts(await api.sshHostSelect(host.id, selected)); }); }} />{t('允许智能体使用')}</label>
           <div className="flex gap-2"><button className="btn btn-ghost flex-1" disabled={busy} onClick={() => void test(host)}>{t('测试连接')}</button><button aria-label={t('删除服务器')} className="btn btn-ghost !px-2" disabled={busy} onClick={() => { if (window.confirm(t('删除连接配置？服务器上的文件不会被删除。'))) void run(async () => { setHosts(await api.sshHostRemove(host.id)); if (draft.id === host.id) { setDraft(blank()); setEditing(false); } }); }}><Trash2 size={14} /></button></div>
+          <label className="t-caption">绑定计算 Worker<select className="field w-full mt-1" disabled={busy || !settings?.platformUrl} value={host.workerNodeId || ''} onChange={event => { const value=event.target.value; void run(async () => setHosts(await api.sshHostBind(host.id, value || null))); }}><option value="">仅 SSH，不参与任务调度</option>{nodes.map(node => <option key={node.id} value={node.id}>{node.name} · {node.status}</option>)}</select></label>
+          {!settings?.platformUrl && <div className="t-caption">在设置中连接计算平台，注册 Worker 后可绑定并参与调度。</div>}
           <button className="btn btn-ghost" disabled={!host.hostKey || resourceBusy[host.id]} onClick={() => void query(host.id)}>{resourceBusy[host.id] ? '正在查询资源…' : '查询 / 刷新资源'}</button>
           {resourceErrors[host.id] && <div role="alert" className="t-caption break-words" style={{ color: 'var(--red)' }}>{resourceErrors[host.id]}</div>}
           {metrics[host.id] && <ResourceSummary value={metrics[host.id]} />}

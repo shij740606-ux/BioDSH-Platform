@@ -30,6 +30,7 @@ from biodsh_platform.models import (
     User,
     new_id,
 )
+from biodsh_platform.scheduler import evaluate
 from biodsh_platform.schemas import (
     AuditLogRead,
     HealthRead,
@@ -77,7 +78,6 @@ from biodsh_platform.security import (
 from biodsh_platform.services import (
     append_job_event,
     get_job_or_404,
-    job_fits_node,
     request_job_cancellation,
 )
 
@@ -655,6 +655,9 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
     advertised = (node.capabilities or {}).get("executors", [])
     if not isinstance(advertised, list) or not set(body.supported_kinds).issubset(advertised):
         raise HTTPException(status_code=422, detail="Worker requested an unadvertised job kind")
+    # ponytail: serialize claims with database writes; per-pool locks if throughput requires it.
+    db.execute(update(ComputeNode).values(updated_at=ComputeNode.updated_at))
+    db.expire_all()
     now = datetime.now(UTC)
     expired = list(
         db.scalars(
@@ -696,12 +699,7 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
                 message=stale.error_message,
                 payload={"status": JobStatus.UNKNOWN},
             )
-    latest_metric = db.scalar(
-        select(NodeMetric)
-        .where(NodeMetric.node_id == node.id)
-        .order_by(NodeMetric.collected_at.desc())
-        .limit(1)
-    )
+    db.flush()
     candidates = list(
         db.scalars(
             select(Job)
@@ -712,7 +710,8 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
     )
     lease_expires_at = now + timedelta(seconds=get_settings().job_lease_seconds)
     for candidate in candidates:
-        if not job_fits_node(candidate, node, latest_metric):
+        decision = evaluate(db, candidate)
+        if decision["selected_node_id"] != node.id:
             continue
         claimed = db.execute(
             update(Job)
@@ -723,6 +722,12 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
                 assigned_at=now,
                 lease_expires_at=lease_expires_at,
                 attempt=Job.attempt + 1,
+                payload={
+                    **candidate.payload,
+                    "_allocation": next(
+                        row for row in decision["nodes"] if row["node_id"] == node.id
+                    ),
+                },
             )
             .execution_options(synchronize_session=False)
         )
@@ -734,7 +739,7 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
             db,
             job,
             kind="status",
-            message=f"Job assigned to {node.name}",
+            message=decision["reason"],
             payload={"status": JobStatus.ASSIGNED, "node_id": node.id},
         )
         db.commit()
@@ -904,10 +909,17 @@ async def upload_job_artifact(
 @api_router.post("/jobs", response_model=JobRead, status_code=status.HTTP_201_CREATED)
 def create_job(body: JobCreate, db: DbSession, user: CurrentUser) -> Job:
     require_project(db, user, body.project_id, ProjectRole.ANALYST)
+    if {"_scheduling", "_allocation"} & body.payload.keys():
+        raise HTTPException(status_code=422, detail="Reserved payload field _scheduling")
+    if body.node_ids is not None:
+        known = set(db.scalars(select(ComputeNode.id).where(ComputeNode.id.in_(body.node_ids))))
+        if known != set(body.node_ids):
+            raise HTTPException(status_code=422, detail="Unknown scheduling node")
+    payload = {**body.payload, "_scheduling": {"node_ids": body.node_ids}}
     job = Job(
         project_id=body.project_id,
         kind=body.kind,
-        payload=body.payload,
+        payload=payload,
         requested_resources=body.requested_resources,
         priority=body.priority,
         created_by=user.id,
@@ -1050,3 +1062,18 @@ def list_audit_logs(
     elif not user.is_admin:
         raise HTTPException(status_code=403, detail="Choose a project to view its audit log")
     return list(db.scalars(query))
+
+
+@api_router.get("/scheduling/nodes")
+def scheduling_nodes(db: DbSession, _: CurrentUser) -> list[dict]:
+    return [
+        dict(id=n.id, name=n.name, hostname=n.hostname, status=n.status)
+        for n in db.scalars(select(ComputeNode).order_by(ComputeNode.name))
+    ]
+
+
+@api_router.get("/jobs/{job_id}/scheduling")
+def job_scheduling(job_id: str, db: DbSession, user: CurrentUser) -> dict:
+    job = get_job_or_404(db, job_id)
+    require_project(db, user, job.project_id, ProjectRole.VIEWER)
+    return evaluate(db, job)

@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import psutil
@@ -22,6 +23,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from biodsh_platform import __version__
+from biodsh_platform.services import job_fits_node
 
 
 class WorkerSettings(BaseSettings):
@@ -344,6 +346,25 @@ def execute_job(
     executors: dict[str, dict[str, Any]],
     job: dict[str, Any],
 ) -> None:
+    requested = job.get("requested_resources", {})
+    if any(requested.values()):
+        metric = collect_metric(settings.metric_path)
+        if not job_fits_node(
+            SimpleNamespace(requested_resources=requested),
+            SimpleNamespace(capabilities=node_capabilities),
+            SimpleNamespace(**metric),
+        ):
+            raise RuntimeError("Resources changed after assignment; refusing to start analysis")
+        allocated = job.get("payload", {}).get("_allocation", {}).get("gpu_indices", [])
+        current = {str(g["index"]): g for g in metric["gpus"]}
+        for index in allocated:
+            gpu = current.get(index)
+            if not gpu or (gpu.get("memory_total_mib") or 0) - (
+                gpu.get("memory_used_mib") or 0
+            ) < requested.get("gpu_memory_mib", 0):
+                raise RuntimeError(
+                    "Assigned GPU is no longer available; refusing to start analysis"
+                )
     profile = executors[job["kind"]]
     arguments = job.get("payload", {}).get("arguments", [])
     if not isinstance(arguments, list) or not all(isinstance(value, str) for value in arguments):
@@ -369,6 +390,12 @@ def execute_job(
     ):
         raise RuntimeError("executor environment must contain string keys and values")
     environment.update(configured_environment)
+    allocation = job.get("payload", {}).get("_allocation", {})
+    if "gpu_indices" in allocation:
+        environment["CUDA_VISIBLE_DEVICES"] = ",".join(allocation["gpu_indices"])
+    if requested.get("cpu"):
+        for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+            environment[key] = str(requested["cpu"])
     command = [*profile["command"], *arguments]
     control = request_json(
         api_url(
