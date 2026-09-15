@@ -25,6 +25,10 @@ pub struct AppSettings {
     pub platform_url: String,
     #[serde(default)]
     pub current_project_id: String,
+    #[serde(default)]
+    pub ragflow_url: String,
+    #[serde(default = "default_ragflow_mode")]
+    pub ragflow_mode: String,
     /// 图像生成（OpenAI 兼容 images 接口）：智谱 CogView / OpenAI / SiliconFlow / 通义万相
     #[serde(default)]
     pub image_base_url: String,
@@ -61,11 +65,12 @@ fn default_transport() -> String { "stdio".into() }
 
 fn default_language() -> String { "system".into() }
 fn default_mode() -> String { "online".into() }
+fn default_ragflow_mode() -> String { "local".into() }
 
 impl AppSettings {
     pub fn load(p: &AppPaths) -> AppSettings {
         let f = p.root.join("settings.json");
-        let mut s = AppSettings { use_china_mirror: true, workspace: p.workspace.to_string_lossy().into(), onboarded: false, theme: "system".into(), language: "system".into(), mode: "online".into(), offline_base_url: String::new(), offline_model: String::new(), offline_api_key: String::new(), remote_dsh_url: String::new(), platform_url: String::new(), current_project_id: String::new(), image_base_url: String::new(), image_api_key: String::new(), image_model: String::new(), mcp_servers: Vec::new(), demos_seeded: false };
+        let mut s = AppSettings { use_china_mirror: true, workspace: p.workspace.to_string_lossy().into(), onboarded: false, theme: "system".into(), language: "system".into(), mode: "online".into(), offline_base_url: String::new(), offline_model: String::new(), offline_api_key: String::new(), remote_dsh_url: String::new(), platform_url: String::new(), current_project_id: String::new(), ragflow_url: "http://127.0.0.1:9380".into(), ragflow_mode: default_ragflow_mode(), image_base_url: String::new(), image_api_key: String::new(), image_model: String::new(), mcp_servers: Vec::new(), demos_seeded: false };
         let mut had_legacy_platform_token = false;
         if let Ok(txt) = fs::read_to_string(&f) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
@@ -86,6 +91,8 @@ impl AppSettings {
                         match field { 0 => s.platform_url = val.into(), _ => s.current_project_id = val.into() }
                     }
                 }
+                if let Some(val) = v.get("ragflowUrl").and_then(|x| x.as_str()) { s.ragflow_url = val.into(); }
+                if let Some(val) = v.get("ragflowMode").and_then(|x| x.as_str()) { s.ragflow_mode = val.into(); }
                 for (k, field) in [("imageBaseUrl", 0), ("imageModel", 1), ("imageApiKey", 2)] {
                     if let Some(val) = v.get(k).and_then(|x| x.as_str()) {
                         match field { 0 => s.image_base_url = val.into(), 1 => s.image_model = val.into(), _ => s.image_api_key = val.into() }

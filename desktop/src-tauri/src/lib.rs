@@ -9,6 +9,7 @@ mod git;
 mod migrate;
 mod paths;
 mod platform_auth;
+mod knowledge;
 mod pyenv;
 mod settings;
 mod skills;
@@ -309,6 +310,55 @@ fn platform_download_job_artifact(state: State<'_, AppState>, job_id: String, ar
     let target = state.paths.root.join("results").join(&job_id).join(relative);
     platform_auth::download_job_artifact(&state.settings.lock().unwrap().platform_url, &job_id, &artifact_id, &target)?;
     Ok(target.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn knowledge_credential() -> knowledge::CredentialStatus { knowledge::credential() }
+#[tauri::command]
+fn knowledge_set_credential(key: String) -> Result<knowledge::CredentialStatus, String> { knowledge::set_credential(&key) }
+#[tauri::command]
+async fn knowledge_datasets(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let url = state.settings.lock().unwrap().ragflow_url.clone();
+    tauri::async_runtime::spawn_blocking(move || knowledge::datasets(&url)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn knowledge_create_dataset(state: State<'_, AppState>, name: String, description: String) -> Result<serde_json::Value, String> {
+    let url = state.settings.lock().unwrap().ragflow_url.clone();
+    tauri::async_runtime::spawn_blocking(move || knowledge::create_dataset(&url, &name, &description)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn knowledge_documents(state: State<'_, AppState>, dataset_id: String) -> Result<serde_json::Value, String> {
+    let url = state.settings.lock().unwrap().ragflow_url.clone(); let root = state.paths.root.clone();
+    tauri::async_runtime::spawn_blocking(move || knowledge::documents(&root, &url, &dataset_id)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn knowledge_add_files(app: AppHandle, state: State<'_, AppState>, dataset_id: String) -> Result<knowledge::SyncResult, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog().file().add_filter("Word 和 PDF", &["pdf", "doc", "docx"]).pick_files(move |paths| { let _ = tx.send(paths); });
+    let files = tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten().unwrap_or_default().into_iter().map(|p| std::path::PathBuf::from(p.to_string())).collect::<Vec<_>>()).await.map_err(|e| e.to_string())?;
+    let url = state.settings.lock().unwrap().ragflow_url.clone(); let root = state.paths.root.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || knowledge::upload_files(&root, &url, &dataset_id, &files)).await.map_err(|e| e.to_string())?)
+}
+#[tauri::command]
+fn knowledge_folders(state: State<'_, AppState>) -> Vec<knowledge::Folder> { knowledge::folders(&state.paths.root) }
+#[tauri::command]
+async fn knowledge_add_folder(app: AppHandle, state: State<'_, AppState>, dataset_id: String) -> Result<knowledge::SyncResult, String> {
+    let (tx, rx) = std::sync::mpsc::channel(); app.dialog().file().pick_folder(move |path| { let _ = tx.send(path); });
+    let Some(directory) = tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten().map(|p| p.to_string())).await.map_err(|e| e.to_string())? else { return Ok(knowledge::SyncResult::default()) };
+    let url = state.settings.lock().unwrap().ragflow_url.clone(); let root = state.paths.root.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || knowledge::add_folder(&root, &url, &dataset_id, &directory)).await.map_err(|e| e.to_string())?)
+}
+#[tauri::command]
+fn knowledge_remove_folder(state: State<'_, AppState>, dataset_id: String, path: String) -> Vec<knowledge::Folder> { knowledge::remove_folder(&state.paths.root, &dataset_id, &path) }
+#[tauri::command]
+async fn knowledge_sync_folders(state: State<'_, AppState>) -> Result<knowledge::SyncResult, String> {
+    let url = state.settings.lock().unwrap().ragflow_url.clone(); let root = state.paths.root.clone();
+    Ok(tauri::async_runtime::spawn_blocking(move || knowledge::sync_folders(&root, &url)).await.map_err(|e| e.to_string())?)
+}
+#[tauri::command]
+async fn knowledge_search(state: State<'_, AppState>, dataset_ids: Vec<String>, question: String) -> Result<serde_json::Value, String> {
+    let url = state.settings.lock().unwrap().ragflow_url.clone();
+    tauri::async_runtime::spawn_blocking(move || knowledge::search(&url, dataset_ids, &question)).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn credential_set(app: AppHandle, state: State<'_, AppState>, key: String) -> Result<CredentialStatus, String> {
@@ -739,6 +789,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
+            knowledge_credential, knowledge_set_credential, knowledge_datasets, knowledge_create_dataset, knowledge_documents, knowledge_add_files, knowledge_folders, knowledge_add_folder, knowledge_remove_folder, knowledge_sync_folders, knowledge_search,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
             skills_catalog, skills_statuses, skills_readme, skills_install, skills_uninstall,
             open_path, open_external, pick_folder, window_control, client_log, deepseek_balance, git_status, git_init, git_commit, dsh_rpc, dsh_open_session, dsh_new_session, check_updates, assistant_ask, session_export, workspace_files, read_workspace_image, ratings_get, ratings_set, session_delete, env_install_extra, migrate_scan, migrate_import, refdata_list, refdata_install, refdata_remove, demos_seed, dsh_set_context

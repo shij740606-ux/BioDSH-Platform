@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import type { AppSettings, AppPaths, CredentialStatus } from '../shared/types';
 
-const DEFAULTS: AppSettings = { useChinaMirror: true, workspace: '', onboarded: false, theme: 'system', language: 'system', mode: 'online', offlineBaseUrl: '', offlineModel: '', offlineApiKey: '', remoteDshUrl: '', platformUrl: '', currentProjectId: '', imageBaseUrl: '', imageApiKey: '', imageModel: '', mcpServers: [], demosSeeded: false };
+const DEFAULTS: AppSettings = { useChinaMirror: true, workspace: '', onboarded: false, theme: 'system', language: 'system', mode: 'online', offlineBaseUrl: '', offlineModel: '', offlineApiKey: '', remoteDshUrl: '', platformUrl: '', currentProjectId: '', ragflowUrl: 'http://127.0.0.1:9380', ragflowMode: 'local', imageBaseUrl: '', imageApiKey: '', imageModel: '', mcpServers: [], demosSeeded: false };
 
 export function loadSettings(p: AppPaths): AppSettings {
   const f = path.join(p.root, 'settings.json');

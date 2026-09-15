@@ -73,6 +73,10 @@ export interface AppSettings {
   platformUrl: string;
   /** 当前选中的平台项目 */
   currentProjectId: string;
+  /** RAGFlow 服务地址；API 密钥单独保存在系统安全存储 */
+  ragflowUrl: string;
+  /** 知识库解析位置：本机 RAGFlow 或远程服务器 RAGFlow */
+  ragflowMode: 'local' | 'server';
   /** 图像生成：OpenAI 兼容 images 接口（智谱 CogView / OpenAI / SiliconFlow / 通义万相） */
   imageBaseUrl: string;
   imageApiKey: string;
@@ -183,6 +187,47 @@ export interface PlatformJobCreate {
   requestedResources: Record<string, number>;
   priority?: number;
 }
+
+export interface KnowledgeCredentialStatus { configured: boolean; masked?: string }
+export interface KnowledgeDataset {
+  id: string;
+  name: string;
+  description: string;
+  documentCount: number;
+  chunkCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+export interface KnowledgeDocument {
+  id: string;
+  datasetId: string;
+  name: string;
+  sizeBytes: number;
+  chunkCount: number;
+  tokenCount: number;
+  status: 'waiting' | 'parsing' | 'ready' | 'failed';
+  progress: number;
+  createdAt?: string;
+  localPath?: string;
+}
+export interface KnowledgeCitation {
+  id: string;
+  datasetId: string;
+  documentId: string;
+  documentName: string;
+  content: string;
+  similarity: number;
+  page?: number;
+}
+export interface KnowledgeFolder {
+  datasetId: string;
+  path: string;
+  enabled: boolean;
+  fileCount: number;
+  lastSyncAt?: string;
+  error?: string;
+}
+export interface KnowledgeSyncResult { uploaded: number; skipped: number; failed: number }
 
 export interface McpServer {
   name: string;

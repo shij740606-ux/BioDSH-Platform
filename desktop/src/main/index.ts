@@ -10,6 +10,7 @@ import { DshManager, setDshTheme, setDshLocale, setDshLlmOverride } from './dsh'
 import { PyEnvManager } from './pyenv';
 import { SkillStore } from './skills';
 import { PlatformAuth } from './platform-auth';
+import { KnowledgeClient } from './knowledge';
 import type { AppSettings, IpcEvent, Rect } from '../shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,7 @@ let dshBounds: Rect = { x: 0, y: 0, width: 0, height: 0 };
 const paths = appPaths();
 let settings = loadSettings(paths);
 const platformAuth = new PlatformAuth(paths, () => settings.platformUrl);
+const knowledge = new KnowledgeClient(paths, () => settings.ragflowUrl);
 const broadcast = (e: IpcEvent) => win?.webContents.send('event', e);
 const dsh = new DshManager(paths, (status) => broadcast({ type: 'dsh', status }));
 const pyenv = new PyEnvManager(paths, (status) => broadcast({ type: 'env', status }));
@@ -160,6 +162,25 @@ function registerIpc() {
   ipcMain.handle('platform:jobEvents', (_e, jobId: string) => platformAuth.jobEvents(jobId));
   ipcMain.handle('platform:jobArtifacts', (_e, jobId: string) => platformAuth.jobArtifacts(jobId));
   ipcMain.handle('platform:downloadJobArtifact', (_e, jobId: string, artifact) => platformAuth.downloadJobArtifact(jobId, artifact));
+  ipcMain.handle('knowledge:credential', () => knowledge.credential());
+  ipcMain.handle('knowledge:setCredential', (_e, key: string) => knowledge.setCredential(key));
+  ipcMain.handle('knowledge:datasets', () => knowledge.datasets());
+  ipcMain.handle('knowledge:createDataset', (_e, name: string, description: string) => knowledge.createDataset(name, description));
+  ipcMain.handle('knowledge:documents', (_e, datasetId: string) => knowledge.documents(datasetId));
+  ipcMain.handle('knowledge:addFiles', async (_e, datasetId: string) => {
+    if (!win) return { uploaded: 0, skipped: 0, failed: 0 };
+    const result = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Word 和 PDF', extensions: ['pdf', 'doc', 'docx'] }] });
+    return result.canceled ? { uploaded: 0, skipped: 0, failed: 0 } : knowledge.uploadFiles(datasetId, result.filePaths);
+  });
+  ipcMain.handle('knowledge:folders', () => knowledge.folders());
+  ipcMain.handle('knowledge:addFolder', async (_e, datasetId: string) => {
+    if (!win) return { uploaded: 0, skipped: 0, failed: 0 };
+    const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
+    return result.canceled ? { uploaded: 0, skipped: 0, failed: 0 } : knowledge.addFolder(datasetId, result.filePaths[0]);
+  });
+  ipcMain.handle('knowledge:removeFolder', (_e, datasetId: string, directory: string) => knowledge.removeFolder(datasetId, directory));
+  ipcMain.handle('knowledge:syncFolders', () => knowledge.syncFolders());
+  ipcMain.handle('knowledge:search', (_e, datasetIds: string[], question: string) => knowledge.search(datasetIds, question));
   ipcMain.handle('credential:get', () => readCredential(paths));
   ipcMain.handle('credential:set', async (_e, key: string) => { writeCredential(paths, key); if (dsh.status.state !== 'stopped') { const s = await dsh.restart(settings.workspace || paths.workspace); if (s.state === 'running' && s.url) ensureDshView(s.url); } return readCredential(paths); });
   const openSession = (id: string) => dshView?.webContents.executeJavaScript(`try { localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: ${JSON.stringify(id)} })); } catch (e) {} location.reload();`);

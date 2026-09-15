@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession } from '../shared/types';
+import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession, KnowledgeCitation, KnowledgeCredentialStatus, KnowledgeDataset, KnowledgeDocument, KnowledgeFolder, KnowledgeSyncResult } from '../shared/types';
 
 const api = {
   appInfo: () => ipcRenderer.invoke('app:info'),
@@ -18,6 +18,17 @@ const api = {
   platformJobEvents: (jobId: string): Promise<PlatformJobEvent[]> => ipcRenderer.invoke('platform:jobEvents', jobId),
   platformJobArtifacts: (jobId: string): Promise<PlatformJobArtifact[]> => ipcRenderer.invoke('platform:jobArtifacts', jobId),
   platformDownloadJobArtifact: (jobId: string, artifact: PlatformJobArtifact): Promise<string> => ipcRenderer.invoke('platform:downloadJobArtifact', jobId, artifact),
+  knowledgeCredential: (): Promise<KnowledgeCredentialStatus> => ipcRenderer.invoke('knowledge:credential'),
+  knowledgeSetCredential: (key: string): Promise<KnowledgeCredentialStatus> => ipcRenderer.invoke('knowledge:setCredential', key),
+  knowledgeDatasets: (): Promise<KnowledgeDataset[]> => ipcRenderer.invoke('knowledge:datasets'),
+  knowledgeCreateDataset: (name: string, description = ''): Promise<KnowledgeDataset> => ipcRenderer.invoke('knowledge:createDataset', name, description),
+  knowledgeDocuments: (datasetId: string): Promise<KnowledgeDocument[]> => ipcRenderer.invoke('knowledge:documents', datasetId),
+  knowledgeAddFiles: (datasetId: string): Promise<KnowledgeSyncResult> => ipcRenderer.invoke('knowledge:addFiles', datasetId),
+  knowledgeFolders: (): Promise<KnowledgeFolder[]> => ipcRenderer.invoke('knowledge:folders'),
+  knowledgeAddFolder: (datasetId: string): Promise<KnowledgeSyncResult> => ipcRenderer.invoke('knowledge:addFolder', datasetId),
+  knowledgeRemoveFolder: (datasetId: string, path: string): Promise<KnowledgeFolder[]> => ipcRenderer.invoke('knowledge:removeFolder', datasetId, path),
+  knowledgeSyncFolders: (): Promise<KnowledgeSyncResult> => ipcRenderer.invoke('knowledge:syncFolders'),
+  knowledgeSearch: (datasetIds: string[], question: string): Promise<KnowledgeCitation[]> => ipcRenderer.invoke('knowledge:search', datasetIds, question),
   getCredential: () => ipcRenderer.invoke('credential:get'),
   setCredential: (key: string) => ipcRenderer.invoke('credential:set', key),
   envStatus: () => ipcRenderer.invoke('env:status'),
