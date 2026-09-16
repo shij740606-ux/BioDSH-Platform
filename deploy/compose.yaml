@@ -12,7 +12,8 @@ services:
       - biodsh-caddy-data:/data
       - biodsh-caddy-config:/config
     depends_on:
-      - platform
+      platform:
+        condition: service_healthy
 
   postgres:
     image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to a reviewed version}
@@ -74,6 +75,15 @@ services:
       - "${BIODSH_CONTAINER_PORT:?set BIODSH_CONTAINER_PORT}"
     volumes:
       - biodsh-artifacts:/var/lib/biodsh/artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
   biodsh-postgres:
