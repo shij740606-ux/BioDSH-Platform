@@ -6,6 +6,9 @@ import type { AppSettings, IpcEvent, Rect } from '@shared/types';
 
 export function installTauriBridge() {
   const api = {
+    platformProjectCollaboration: (projectId:string, action:string, body:unknown = null) => invoke('platform_project_collaboration', {projectId, action, body}),
+    platformFeishuStart: () => invoke('platform_feishu_start'),
+    platformFeishuPoll: (pollToken:string) => invoke('platform_feishu_poll', {pollToken}),
     platformSchedulingNodes: () => invoke('platform_scheduling_nodes'),
     platformScheduling: (jobId: string) => invoke('platform_scheduling', {jobId}),
     sshHostBind: (id: string, nodeId: string | null) => invoke('ssh_hosts_bind', {id, nodeId}),

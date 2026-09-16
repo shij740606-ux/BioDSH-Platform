@@ -4,7 +4,15 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from biodsh_platform.models import ComputeNode, Job, JobEvent, JobStatus, NodeMetric
+from biodsh_platform.models import (
+    ComputeNode,
+    Job,
+    JobEvent,
+    JobStatus,
+    NodeMetric,
+    NotificationOutbox,
+    ProjectChat,
+)
 
 CANCELLABLE_STATUSES = {
     JobStatus.QUEUED,
@@ -38,6 +46,29 @@ def append_job_event(
         payload=payload or {},
     )
     db.add(event)
+    state = (payload or {}).get("status")
+    if (
+        kind == "status"
+        and state in {"running", "succeeded", "failed", "cancelled", "unknown"}
+        and db.get(ProjectChat, job.project_id)
+    ):
+        key = f"{job.id}:{job.attempt}:{state}"
+        if (
+            db.scalar(select(NotificationOutbox.id).where(NotificationOutbox.event_key == key))
+            is None
+        ):
+            db.add(
+                NotificationOutbox(
+                    event_key=key,
+                    project_id=job.project_id,
+                    body={
+                        "text": (
+                            f"BioDSH 分析任务 {job.kind}\n任务编号：{job.id}\n状态：{state}\n"
+                            "请在 BioDSH 桌面端打开对应项目查看日志与结果。"
+                        )
+                    },
+                )
+            )
     return event
 
 

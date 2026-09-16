@@ -24,7 +24,9 @@ from biodsh_platform.models import (
     NodeMetric,
     NodeStatus,
     Project,
+    ProjectChat,
     ProjectMember,
+    ProjectNode,
     ProjectRole,
     RefreshToken,
     User,
@@ -915,6 +917,14 @@ def create_job(body: JobCreate, db: DbSession, user: CurrentUser) -> Job:
         known = set(db.scalars(select(ComputeNode.id).where(ComputeNode.id.in_(body.node_ids))))
         if known != set(body.node_ids):
             raise HTTPException(status_code=422, detail="Unknown scheduling node")
+    if body.node_ids is not None and (
+        get_settings().project_node_authorization_enabled or get_settings().feishu_login_enabled
+    ):
+        allowed = set(
+            db.scalars(select(ProjectNode.node_id).where(ProjectNode.project_id == body.project_id))
+        )
+        if not set(body.node_ids).issubset(allowed):
+            raise HTTPException(403, "项目无权使用所选计算节点")
     payload = {**body.payload, "_scheduling": {"node_ids": body.node_ids}}
     job = Job(
         project_id=body.project_id,
@@ -1065,10 +1075,20 @@ def list_audit_logs(
 
 
 @api_router.get("/scheduling/nodes")
-def scheduling_nodes(db: DbSession, _: CurrentUser) -> list[dict]:
+def scheduling_nodes(db: DbSession, user: CurrentUser) -> list[dict]:
+    statement = select(ComputeNode).order_by(ComputeNode.name)
+    if not user.is_admin and (
+        get_settings().project_node_authorization_enabled or get_settings().feishu_login_enabled
+    ):
+        projects = accessible_project_ids(db, user)
+        statement = statement.where(
+            ComputeNode.id.in_(
+                select(ProjectNode.node_id).where(ProjectNode.project_id.in_(projects))
+            )
+        )
     return [
         dict(id=n.id, name=n.name, hostname=n.hostname, status=n.status)
-        for n in db.scalars(select(ComputeNode).order_by(ComputeNode.name))
+        for n in db.scalars(statement)
     ]
 
 
@@ -1077,3 +1097,64 @@ def job_scheduling(job_id: str, db: DbSession, user: CurrentUser) -> dict:
     job = get_job_or_404(db, job_id)
     require_project(db, user, job.project_id, ProjectRole.VIEWER)
     return evaluate(db, job)
+
+
+@api_router.get("/projects/{project_id}/nodes")
+def project_nodes(project_id: str, db: DbSession, user: CurrentUser) -> list[str]:
+    require_project(db, user, project_id)
+    return list(db.scalars(select(ProjectNode.node_id).where(ProjectNode.project_id == project_id)))
+
+
+@api_router.post("/projects/{project_id}/nodes")
+@api_router.put("/projects/{project_id}/nodes")
+def set_project_nodes(
+    project_id: str, node_ids: list[str], db: DbSession, user: AdminUser
+) -> list[str]:
+    require_project(db, user, project_id)
+    if len(node_ids) > 200:
+        raise HTTPException(422, "Too many nodes")
+    known = set(db.scalars(select(ComputeNode.id).where(ComputeNode.id.in_(node_ids))))
+    if known != set(node_ids):
+        raise HTTPException(422, "Unknown node")
+    db.execute(delete(ProjectNode).where(ProjectNode.project_id == project_id))
+    db.add_all(ProjectNode(project_id=project_id, node_id=id) for id in known)
+    audit(
+        db,
+        "project.nodes.update",
+        actor_user_id=user.id,
+        project_id=project_id,
+        details={"node_ids": sorted(known)},
+    )
+    db.commit()
+    return sorted(known)
+
+
+@api_router.get("/projects/{project_id}/feishu-chat")
+def get_project_chat(project_id: str, db: DbSession, user: CurrentUser) -> dict:
+    require_project(db, user, project_id)
+    binding = db.get(ProjectChat, project_id)
+    return {"chat_id": binding.chat_id if binding else None}
+
+
+@api_router.post("/projects/{project_id}/feishu-chat")
+@api_router.put("/projects/{project_id}/feishu-chat")
+def bind_project_chat(project_id: str, body: dict, db: DbSession, user: AdminUser) -> dict:
+    from biodsh_platform.feishu import request_api
+    from biodsh_platform.notifications import tenant_token
+
+    require_project(db, user, project_id)
+    chat_id = body.get("chat_id")
+    if chat_id is not None:
+        if not isinstance(chat_id, str) or not chat_id.startswith("oc_") or len(chat_id) > 120:
+            raise HTTPException(422, "Invalid chat ID")
+        import re
+
+        if not re.fullmatch(r"oc_[a-zA-Z0-9_-]+", chat_id):
+            raise HTTPException(422, "Invalid chat ID")
+        request_api(f"im/v1/chats/{chat_id}", token=tenant_token())
+    db.execute(delete(ProjectChat).where(ProjectChat.project_id == project_id))
+    if chat_id:
+        db.add(ProjectChat(project_id=project_id, chat_id=chat_id))
+    audit(db, "project.feishu_chat.update", actor_user_id=user.id, project_id=project_id)
+    db.commit()
+    return {"chat_id": chat_id}

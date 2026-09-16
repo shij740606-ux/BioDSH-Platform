@@ -261,3 +261,55 @@ class JobArtifact(Base):
     content_type: Mapped[str] = mapped_column(String(160), default="application/octet-stream")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     job: Mapped[Job] = relationship(back_populates="artifacts")
+
+
+class ExternalIdentity(Base):
+    __tablename__ = "external_identities"
+    provider: Mapped[str] = mapped_column(String(24), primary_key=True)
+    tenant_key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    display_name: Mapped[str] = mapped_column(String(120), default="")
+
+
+class OAuthFlow(Base):
+    __tablename__ = "oauth_flows"
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    poll_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+
+
+class ProjectNode(Base):
+    __tablename__ = "project_nodes"
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    node_id: Mapped[str] = mapped_column(
+        ForeignKey("compute_nodes.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class ProjectChat(Base):
+    __tablename__ = "project_chats"
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    chat_id: Mapped[str] = mapped_column(String(120))
+
+
+class NotificationOutbox(Base):
+    __tablename__ = "notification_outbox"
+    __table_args__ = (UniqueConstraint("event_key", name="uq_notification_event"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    event_key: Mapped[str] = mapped_column(String(160))
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    body: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from biodsh_platform.config import get_settings
-from biodsh_platform.models import ComputeNode, Job, JobStatus, NodeMetric, NodeStatus
+from biodsh_platform.models import ComputeNode, Job, JobStatus, NodeMetric, NodeStatus, ProjectNode
 from biodsh_platform.services import job_fits_node
 
 
@@ -26,8 +26,15 @@ RESERVED = [
 def evaluate(db: Session, job: Job) -> dict:
     cutoff = datetime.now(UTC) - timedelta(seconds=get_settings().node_offline_seconds)
     scope = (job.payload or {}).get("_scheduling", {}).get("node_ids")
+    authorized = None
+    if get_settings().project_node_authorization_enabled or get_settings().feishu_login_enabled:
+        authorized = set(
+            db.scalars(select(ProjectNode.node_id).where(ProjectNode.project_id == job.project_id))
+        )
     rows = []
     for node in db.scalars(select(ComputeNode).order_by(ComputeNode.id)):
+        if authorized is not None and node.id not in authorized:
+            continue
         if scope is not None and node.id not in scope:
             continue
         metric = db.scalar(

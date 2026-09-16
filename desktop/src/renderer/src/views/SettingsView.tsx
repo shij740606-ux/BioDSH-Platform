@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import UpdateCheck from '../components/UpdateCheck';
+import ProjectCollaboration from '../components/ProjectCollaboration';
 import { ExternalLink, FolderOpen, KeyRound } from 'lucide-react';
 import { useApp } from '../store';
 import type { McpServer } from '@shared/types';
@@ -42,6 +43,7 @@ export default function SettingsView() {
       </header>
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-[720px] mx-auto px-8 py-8 flex flex-col gap-6">
+          <ProjectCollaboration />
           <Section title={t('运行模式')} desc={t('在线模式走 DeepSeek 云端接口；纯离线模式面向医院/内网：连本地或内网的模型接口，软件不发起任何外网请求（余额、更新检查等联网功能自动关闭）。')}>
             <div className="seg">
               {(['online', 'offline'] as const).map((k) => <button key={k} className={(settings.mode ?? 'online') === k ? 'active' : ''} onClick={async () => { await updateSettings({ mode: k }); void restartDsh(); }}>{t({ online: '在线模式', offline: '纯离线模式' }[k])}</button>)}

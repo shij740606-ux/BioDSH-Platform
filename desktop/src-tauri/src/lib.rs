@@ -818,7 +818,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_scheduling_nodes, platform_scheduling, ssh_hosts_bind, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
+            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_feishu_start, platform_feishu_poll, platform_project_collaboration, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_scheduling_nodes, platform_scheduling, ssh_hosts_bind, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
             knowledge_credential, knowledge_set_credential, knowledge_datasets, knowledge_create_dataset, knowledge_documents, knowledge_add_files, knowledge_folders, knowledge_add_folder, knowledge_remove_folder, knowledge_sync_folders, knowledge_search,
             ssh_hosts_list, ssh_hosts_save, ssh_hosts_remove, ssh_hosts_select, ssh_hosts_trust, ssh_hosts_test, ssh_hosts_metrics,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,
@@ -840,4 +840,21 @@ fn ssh_hosts_bind(state: State<'_, AppState>, id: String, node_id: Option<String
         if !nodes.as_array().is_some_and(|items| items.iter().any(|node| node["id"].as_str() == Some(value))) { return Err("计算节点不存在".into()); }
     }
     ssh_hosts::bind(&state.paths.root, &id, node_id)
+}
+
+#[tauri::command]
+async fn platform_feishu_start(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let url=state.settings.lock().unwrap().platform_url.clone();
+    tauri::async_runtime::spawn_blocking(move || platform_auth::feishu_start(&url)).await.map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn platform_feishu_poll(state: State<'_, AppState>, poll_token: String) -> Result<serde_json::Value, String> {
+    let url=state.settings.lock().unwrap().platform_url.clone();
+    tauri::async_runtime::spawn_blocking(move || platform_auth::feishu_poll(&url, &poll_token)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn platform_project_collaboration(state: State<'_, AppState>, project_id: String, action: String, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let url=state.settings.lock().unwrap().platform_url.clone();
+    tauri::async_runtime::spawn_blocking(move || platform_auth::project_collaboration(&url, &project_id, &action, body)).await.map_err(|e| e.to_string())?
 }

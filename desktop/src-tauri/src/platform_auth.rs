@@ -461,3 +461,24 @@ pub fn scheduling_nodes(url: &str) -> Result<serde_json::Value, String> {
 pub fn scheduling(url: &str, id: &str) -> Result<serde_json::Value, String> {
     let mut session = configured_session(url)?; get_with_refresh(&mut session, &format!("/jobs/{id}/scheduling"))
 }
+
+pub fn feishu_start(url: &str) -> Result<serde_json::Value, String> {
+    let (base, api) = discover(url)?;
+    ureq::post(&format!("{base}{api}/auth/feishu/start")).timeout(std::time::Duration::from_secs(15)).send_json(serde_json::json!({})).map_err(|_| "无法发起飞书登录，请管理员确认平台已启用飞书".to_string()).and_then(parse)
+}
+pub fn feishu_poll(url: &str, poll_token: &str) -> Result<serde_json::Value, String> {
+    let (base_url, api_path) = discover(url)?;
+    let response = ureq::post(&format!("{base_url}{api_path}/auth/feishu/poll")).timeout(std::time::Duration::from_secs(15)).send_json(serde_json::json!({"poll_token":poll_token})).map_err(|_| "飞书登录未完成或已过期，请重试".to_string()).and_then(parse)?;
+    if response["status"].as_str() != Some("ready") { return Ok(serde_json::json!({"ready":false})); }
+    let session = StoredSession {base_url, api_path, access_token:response["access_token"].as_str().ok_or("登录响应无效")?.into(), refresh_token:response["refresh_token"].as_str().ok_or("登录响应无效")?.into()};
+    save(&session)?;
+    Ok(serde_json::json!({"ready":true}))
+}
+
+pub fn project_collaboration(url: &str, project_id: &str, action: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    let id = uuid::Uuid::parse_str(project_id).map_err(|_| "项目编号无效")?;
+    let mut session = configured_session(url)?;
+    let endpoint = match action { "nodes-get" | "nodes-set" => "nodes", "chat-get" | "chat-set" => "feishu-chat", _ => return Err("无效操作".into()) };
+    let path = format!("/projects/{id}/{endpoint}");
+    if action.ends_with("get") { get_with_refresh(&mut session, &path) } else { post_with_refresh(&mut session, &path, body) }
+}

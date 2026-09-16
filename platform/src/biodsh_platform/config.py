@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     artifact_root: Path = Path("./biodsh-artifacts")
     artifact_max_bytes: int = Field(default=1_073_741_824, ge=1_048_576)
     auto_create_schema: bool = False
+    project_node_authorization_enabled: bool = False
+    feishu_notifications_enabled: bool = False
+    feishu_app_id: str = ""
+    feishu_app_secret: SecretStr = SecretStr("")
+    feishu_redirect_uri: str = ""
+    feishu_allowed_tenants: list[str] = Field(default_factory=list)
+    feishu_login_enabled: bool = False
     cors_origins: list[str] = Field(default_factory=list)
 
     @field_validator("api_prefix")
@@ -54,6 +61,25 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_environment_contract(self) -> "Settings":
+        if self.feishu_notifications_enabled and not (
+            self.feishu_app_id and self.feishu_app_secret.get_secret_value()
+        ):
+            raise ValueError("Feishu notifications require app credentials")
+        if self.feishu_login_enabled:
+            if not (
+                self.feishu_app_id
+                and self.feishu_app_secret.get_secret_value()
+                and self.feishu_redirect_uri
+                and self.feishu_allowed_tenants
+            ):
+                raise ValueError(
+                    "Feishu login requires app credentials, redirect URI and allowed tenants"
+                )
+            if not self.feishu_redirect_uri.startswith("https://") and self.environment not in {
+                "development",
+                "test",
+            }:
+                raise ValueError("Feishu production callback requires HTTPS")
         token = self.platform_token.get_secret_value()
         jwt_secret = self.jwt_secret.get_secret_value()
         if len(token) < 16:

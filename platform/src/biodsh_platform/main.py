@@ -1,3 +1,4 @@
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,14 +8,23 @@ from biodsh_platform import __version__
 from biodsh_platform.api import api_router, health_router
 from biodsh_platform.config import get_settings
 from biodsh_platform.db import engine
+from biodsh_platform.feishu import router as feishu_router
 from biodsh_platform.models import Base
+from biodsh_platform.notifications import run as notify_run
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     if get_settings().auto_create_schema:
         Base.metadata.create_all(bind=engine)
-    yield
+    stop = threading.Event()
+    thread = threading.Thread(target=notify_run, args=(stop,), daemon=True)
+    if get_settings().feishu_notifications_enabled:
+        thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
 
 
 def create_app() -> FastAPI:
@@ -37,6 +47,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(feishu_router, prefix=settings.api_prefix)
     app.include_router(health_router)
     app.include_router(api_router, prefix=settings.api_prefix)
     return app

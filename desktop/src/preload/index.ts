@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { AppSettings, IpcEvent, Rect, RefPack, DemoInfo, PlatformJob, PlatformJobArtifact, PlatformJobCreate, PlatformJobEvent, PlatformNode, PlatformNodeControlStatus, PlatformNodeMetric, PlatformSession, KnowledgeCitation, KnowledgeCredentialStatus, KnowledgeDataset, KnowledgeDocument, KnowledgeFolder, KnowledgeSyncResult } from '../shared/types';
 
 const api = {
+  platformProjectCollaboration: (_projectId:string, _action:string, _body:unknown = null): Promise<unknown> => Promise.reject(new Error('需要 Tauri 桌面版')),
+  platformFeishuStart: (): Promise<{authorization_url:string; poll_token:string; expires_in:number}> => Promise.reject(new Error('需要 Tauri 桌面版')),
+  platformFeishuPoll: (_pollToken:string): Promise<{ready:boolean}> => Promise.reject(new Error('需要 Tauri 桌面版')),
   platformSchedulingNodes: (): Promise<import('../shared/types').SchedulingNode[]> => Promise.reject(new Error('需要 Tauri 桌面版')),
   platformScheduling: (_jobId: string): Promise<import('../shared/types').SchedulingDecision> => Promise.reject(new Error('需要 Tauri 桌面版')),
   sshHostBind: (_id: string, _nodeId: string | null): Promise<import('../shared/types').SshHost[]> => Promise.reject(new Error('需要 Tauri 桌面版')),
