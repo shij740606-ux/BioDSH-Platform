@@ -39,6 +39,13 @@ System administrators manage users and nodes. Project owners manage membership, 
 
 The Tauri desktop stores the platform session in the operating system keyring. On Windows this is Windows Credential Manager. `settings.json` contains only the platform URL and selected project ID; old `platformToken` values are removed during settings migration.
 
+For a production Feishu setup, first add the callback URL shown below to the custom app's security settings and grant the app permission to read enterprise information. Then run the interactive helper on the server. It validates the App Secret without printing it, discovers the tenant key, updates the restricted `.env`, and recreates the platform container.
+
+```bash
+https://your-platform.example.org/api/v1/auth/feishu/callback
+sudo python3 deploy/configure-feishu.py
+```
+
 ## Compute workers and resource metrics
 
 Each compute server runs `biodsh-worker`. Enrollment uses the bootstrap token once and returns a unique node credential; the database stores only its SHA-256 digest. Heartbeats use the per-node credential and report CPU, memory, disk, network, NVIDIA GPU, and running-job metrics. The desktop reads the consolidated node list and history through the Platform API, so adding servers does not add desktop credentials or direct SSH connections.
