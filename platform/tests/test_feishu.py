@@ -22,7 +22,12 @@ def enabled(monkeypatch):
     monkeypatch.setattr(
         feishu,
         "identity_from_code",
-        lambda code: dict(tenant_key="allowed", open_id="person", name="User"),
+        lambda code: dict(
+            tenant_key="allowed",
+            open_id="person",
+            name="User",
+            avatar_url="https://example.test/avatar.png",
+        ),
     )
 
 
@@ -168,8 +173,46 @@ def test_outbox_retry_and_dedup(client, admin_headers, monkeypatch):
     notifications.deliver_once()
     notifications.deliver_once()
     assert len(sent) == 1
+    assert sent[0][1]["msg_type"] == "interactive"
+    assert "任务已完成" in sent[0][1]["content"]
     with SessionLocal() as db:
         assert db.scalar(select(NotificationOutbox)).status == "sent"
+
+
+def test_project_invitation_feishu_onboarding(client, admin_headers, enabled, monkeypatch):
+    monkeypatch.setattr(get_settings(), "public_base_url", "https://biodsh.example.test")
+    project = client.post(
+        "/api/v1/projects", headers=admin_headers, json={"name": "invited-project"}
+    ).json()
+    invitation = client.post(
+        f"/api/v1/projects/{project['id']}/invitations",
+        headers=admin_headers,
+        json={"role": "analyst", "days": 7, "uses": 1},
+    )
+    assert invitation.status_code == 200
+    token = urlparse(invitation.json()["url"]).fragment
+    flow = client.post("/api/v1/auth/feishu/start", json={"invitation_token": token}).json()
+    state = parse_qs(urlparse(flow["authorization_url"]).query)["state"][0]
+    assert (
+        client.get(
+            "/api/v1/auth/feishu/callback", params={"code": "code", "state": state}
+        ).status_code
+        == 200
+    )
+    result = client.post("/api/v1/auth/feishu/poll", json={"poll_token": flow["poll_token"]})
+    assert result.status_code == 200
+    assert result.json()["project_id"] == project["id"]
+    headers = {"Authorization": "Bearer " + result.json()["access_token"]}
+    assert client.get("/api/v1/projects", headers=headers).json()[0]["role"] == "analyst"
+    me = client.get("/api/v1/auth/me", headers=headers).json()
+    assert me["display_name"] == "User"
+    assert me["avatar_url"] == "https://example.test/avatar.png"
+    members = client.get(f"/api/v1/projects/{project['id']}/members", headers=admin_headers).json()
+    assert any(member["display_name"] == "User" for member in members)
+    assert (
+        client.post("/api/v1/auth/feishu/start", json={"invitation_token": token}).status_code
+        == 400
+    )
 
 
 def test_migration_roundtrip_and_no_model_drift(tmp_path, monkeypatch):

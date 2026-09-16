@@ -9,6 +9,8 @@ from biodsh_platform.api import api_router, health_router
 from biodsh_platform.config import get_settings
 from biodsh_platform.db import engine
 from biodsh_platform.feishu import router as feishu_router
+from biodsh_platform.invitations import landing as invitation_landing
+from biodsh_platform.invitations import router as invitation_router
 from biodsh_platform.models import Base
 from biodsh_platform.notifications import run as notify_run
 
@@ -48,6 +50,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(feishu_router, prefix=settings.api_prefix)
+    app.include_router(invitation_router, prefix=settings.api_prefix)
+    app.add_api_route("/join", invitation_landing)
     app.include_router(health_router)
     app.include_router(api_router, prefix=settings.api_prefix)
     return app

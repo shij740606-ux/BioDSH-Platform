@@ -9,6 +9,7 @@ export function installTauriBridge() {
     platformProjectCollaboration: (projectId:string, action:string, body:unknown = null) => invoke('platform_project_collaboration', {projectId, action, body}),
     platformFeishuStart: () => invoke('platform_feishu_start'),
     platformFeishuPoll: (pollToken:string) => invoke('platform_feishu_poll', {pollToken}),
+    platformConfigureInvitation: (invitationUrl:string) => invoke('platform_configure_invitation', {invitationUrl}),
     platformSchedulingNodes: () => invoke('platform_scheduling_nodes'),
     platformScheduling: (jobId: string) => invoke('platform_scheduling', {jobId}),
     sshHostBind: (id: string, nodeId: string | null) => invoke('ssh_hosts_bind', {id, nodeId}),

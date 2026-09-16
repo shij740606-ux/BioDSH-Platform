@@ -267,6 +267,18 @@ fn platform_login(state: State<'_, AppState>, username: String, password: String
     platform_auth::login(&state.settings.lock().unwrap().platform_url, &username, &password)
 }
 #[tauri::command]
+fn platform_configure_invitation(
+    state: State<'_, AppState>,
+    invitation_url: String,
+) -> Result<serde_json::Value, String> {
+    let base_url = platform_auth::configure_invitation(&invitation_url)?;
+    let mut settings = state.settings.lock().unwrap();
+    settings.platform_url = base_url.clone();
+    settings.current_project_id.clear();
+    settings.save(&state.paths);
+    Ok(serde_json::json!({ "platformUrl": base_url }))
+}
+#[tauri::command]
 fn platform_logout(state: State<'_, AppState>) -> serde_json::Value {
     platform_auth::logout(&state.settings.lock().unwrap().platform_url)
 }
@@ -818,7 +830,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_feishu_start, platform_feishu_poll, platform_project_collaboration, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_scheduling_nodes, platform_scheduling, ssh_hosts_bind, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
+            app_info, settings_get, settings_set, credential_get, credential_set, platform_session, platform_login, platform_configure_invitation, platform_feishu_start, platform_feishu_poll, platform_project_collaboration, platform_logout, platform_nodes, platform_node_metrics, platform_update_node, platform_jobs, platform_job_kinds, platform_create_job, platform_scheduling_nodes, platform_scheduling, ssh_hosts_bind, platform_cancel_job, platform_job_events, platform_job_artifacts, platform_download_job_artifact,
             knowledge_credential, knowledge_set_credential, knowledge_datasets, knowledge_create_dataset, knowledge_documents, knowledge_add_files, knowledge_folders, knowledge_add_folder, knowledge_remove_folder, knowledge_sync_folders, knowledge_search,
             ssh_hosts_list, ssh_hosts_save, ssh_hosts_remove, ssh_hosts_select, ssh_hosts_trust, ssh_hosts_test, ssh_hosts_metrics,
             env_status, env_install, dsh_status, dsh_start, dsh_restart, dsh_reload, dsh_bounds,

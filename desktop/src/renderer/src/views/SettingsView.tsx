@@ -26,9 +26,20 @@ export default function SettingsView() {
   const [draft, setDraft] = useState<{ offlineBaseUrl?: string; offlineModel?: string; offlineApiKey?: string; remoteDshUrl?: string }>({});
   const saveOffline = async () => { await updateSettings(draft); setDraft({}); void restartDsh(); };
   const [platformDraft, setPlatformDraft] = useState<{ platformUrl?: string }>({});
+  const [invitationUrl, setInvitationUrl] = useState('');
+  const [invitationNotice, setInvitationNotice] = useState('');
   const savePlatform = async () => {
     if (Object.keys(platformDraft).length) await updateSettings(platformDraft);
     setPlatformDraft({});
+  };
+  const useInvitation = async () => {
+    setInvitationNotice('');
+    try {
+      const result = await window.biodsh.platformConfigureInvitation(invitationUrl);
+      await updateSettings({ platformUrl: result.platformUrl, currentProjectId: '' });
+      setInvitationUrl('');
+      setInvitationNotice('邀请已保存，请点击“飞书登录”完成加入。');
+    } catch (reason) { setInvitationNotice(String(reason)); }
   };
   const [saved, setSaved] = useState(false);
   const [upd, setUpd] = useState<{ dsh: { current: string; latest: string; outdated: boolean } } | null | 'checking' | 'error'>(null);
@@ -81,6 +92,14 @@ export default function SettingsView() {
               />
               <div className="flex items-center gap-3 mt-1">
                 <button className="btn btn-primary" onClick={savePlatform} disabled={Object.keys(platformDraft).length === 0}>{t('保存并登录')}</button>
+              </div>
+              <div className="hairline-t mt-2 pt-3 flex flex-col gap-2">
+                <label className="t-caption">{t('项目邀请链接')}</label>
+                <input className="field t-mono" placeholder="https://平台域名/join#…" value={invitationUrl} onChange={(e) => setInvitationUrl(e.target.value)} />
+                <div className="flex items-center gap-3">
+                  <button className="btn btn-ghost" disabled={!invitationUrl.trim()} onClick={() => void useInvitation()}>{t('使用项目邀请')}</button>
+                  {invitationNotice && <span className="t-caption">{invitationNotice}</span>}
+                </div>
               </div>
             </div>
           </Section>

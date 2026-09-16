@@ -6,6 +6,7 @@ use std::path::Path;
 
 const SERVICE: &str = "BioDSH Platform";
 const ACCOUNT: &str = "desktop-session";
+const INVITATION_ACCOUNT: &str = "pending-invitation";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,8 +17,48 @@ struct StoredSession {
     refresh_token: String,
 }
 
+#[derive(Serialize, Deserialize)]
+struct StoredInvitation {
+    base_url: String,
+    token: String,
+}
+
 fn entry() -> Result<Entry, String> {
     Entry::new(SERVICE, ACCOUNT).map_err(|e| format!("系统安全存储不可用：{e}"))
+}
+
+fn invitation_entry() -> Result<Entry, String> {
+    Entry::new(SERVICE, INVITATION_ACCOUNT).map_err(|e| format!("系统安全存储不可用：{e}"))
+}
+
+pub fn configure_invitation(value: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(value.trim()).map_err(|_| "邀请链接格式无效")?;
+    let host = url.host_str().ok_or("邀请链接缺少服务器地址")?;
+    let local = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    if (url.scheme() != "https" && !(url.scheme() == "http" && local))
+        || url.username() != ""
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.path().trim_end_matches('/') != "/join"
+    {
+        return Err("请粘贴管理员生成的完整 HTTPS 项目邀请链接".into());
+    }
+    let token = url.fragment().filter(|v| (32..=200).contains(&v.len())).ok_or("邀请链接缺少有效令牌")?;
+    let base_url = url.origin().ascii_serialization();
+    let stored = serde_json::to_string(&StoredInvitation { base_url: base_url.clone(), token: token.into() }).map_err(|e| e.to_string())?;
+    invitation_entry()?.set_password(&stored).map_err(|e| format!("保存项目邀请失败：{e}"))?;
+    clear();
+    Ok(base_url)
+}
+
+fn pending_invitation(base_url: &str) -> Option<String> {
+    let value = invitation_entry().ok()?.get_password().ok()?;
+    let stored: StoredInvitation = serde_json::from_str(&value).ok()?;
+    (stored.base_url == base_url.trim().trim_end_matches('/')).then_some(stored.token)
+}
+
+fn clear_invitation() {
+    if let Ok(item) = invitation_entry() { let _ = item.delete_credential(); }
 }
 
 fn load() -> Option<StoredSession> {
@@ -281,7 +322,7 @@ pub fn status(configured_url: &str) -> Result<serde_json::Value, String> {
     };
     let projects = get_with_refresh(&mut session, "/projects")?;
     Ok(
-        serde_json::json!({ "authenticated": true, "user": { "id": me["id"], "username": me["username"], "isActive": me["is_active"], "isAdmin": me["is_admin"] }, "projects": projects }),
+        serde_json::json!({ "authenticated": true, "user": { "id": me["id"], "username": me["username"], "displayName": me["display_name"], "avatarUrl": me["avatar_url"], "isActive": me["is_active"], "isAdmin": me["is_admin"] }, "projects": projects }),
     )
 }
 
@@ -464,7 +505,8 @@ pub fn scheduling(url: &str, id: &str) -> Result<serde_json::Value, String> {
 
 pub fn feishu_start(url: &str) -> Result<serde_json::Value, String> {
     let (base, api) = discover(url)?;
-    ureq::post(&format!("{base}{api}/auth/feishu/start")).timeout(std::time::Duration::from_secs(15)).send_json(serde_json::json!({})).map_err(|_| "无法发起飞书登录，请管理员确认平台已启用飞书".to_string()).and_then(parse)
+    let invitation = pending_invitation(&base);
+    ureq::post(&format!("{base}{api}/auth/feishu/start")).timeout(std::time::Duration::from_secs(15)).send_json(serde_json::json!({"invitation_token": invitation})).map_err(|_| "无法发起飞书登录，请管理员确认平台已启用飞书".to_string()).and_then(parse)
 }
 pub fn feishu_poll(url: &str, poll_token: &str) -> Result<serde_json::Value, String> {
     let (base_url, api_path) = discover(url)?;
@@ -472,13 +514,35 @@ pub fn feishu_poll(url: &str, poll_token: &str) -> Result<serde_json::Value, Str
     if response["status"].as_str() != Some("ready") { return Ok(serde_json::json!({"ready":false})); }
     let session = StoredSession {base_url, api_path, access_token:response["access_token"].as_str().ok_or("登录响应无效")?.into(), refresh_token:response["refresh_token"].as_str().ok_or("登录响应无效")?.into()};
     save(&session)?;
-    Ok(serde_json::json!({"ready":true}))
+    clear_invitation();
+    Ok(serde_json::json!({"ready":true,"projectId":response["project_id"]}))
 }
 
 pub fn project_collaboration(url: &str, project_id: &str, action: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
     let id = uuid::Uuid::parse_str(project_id).map_err(|_| "项目编号无效")?;
     let mut session = configured_session(url)?;
-    let endpoint = match action { "nodes-get" | "nodes-set" => "nodes", "chat-get" | "chat-set" => "feishu-chat", _ => return Err("无效操作".into()) };
-    let path = format!("/projects/{id}/{endpoint}");
-    if action.ends_with("get") { get_with_refresh(&mut session, &path) } else { post_with_refresh(&mut session, &path, body) }
+    let path = match action {
+        "nodes-get" | "nodes-set" => format!("/projects/{id}/nodes"),
+        "chat-get" | "chat-set" => format!("/projects/{id}/feishu-chat"),
+        "members-get" => format!("/projects/{id}/members"),
+        "invites-get" | "invite-create" => format!("/projects/{id}/invitations"),
+        "invite-revoke" => format!("/projects/{id}/invitations/revoke"),
+        "notifications-get" => format!("/projects/{id}/notifications"),
+        "member-set" | "member-remove" => {
+            let user = body.get("user_id").and_then(|v| v.as_str()).ok_or("用户编号无效")?;
+            let user = uuid::Uuid::parse_str(user).map_err(|_| "用户编号无效")?;
+            if action == "member-remove" { format!("/projects/{id}/members/{user}/remove") } else { format!("/projects/{id}/members/{user}") }
+        }
+        _ => return Err("无效操作".into()),
+    };
+    if action.ends_with("get") {
+        get_with_refresh(&mut session, &path)
+    } else {
+        let payload = match action {
+            "member-set" => serde_json::json!({"role": body.get("role").and_then(|v| v.as_str()).ok_or("角色无效")?}),
+            "member-remove" => serde_json::json!({}),
+            _ => body,
+        };
+        post_with_refresh(&mut session, &path, payload)
+    }
 }

@@ -94,7 +94,7 @@ export interface PlatformStatus {
 }
 
 export type PlatformRole = 'admin' | 'owner' | 'analyst' | 'viewer';
-export interface PlatformUser { id: string; username: string; isActive: boolean; isAdmin: boolean }
+export interface PlatformUser { id: string; username: string; displayName?: string; avatarUrl?: string; isActive: boolean; isAdmin: boolean }
 export interface PlatformProject { id: string; name: string; description: string; role: PlatformRole }
 export interface PlatformSession {
   authenticated: boolean;

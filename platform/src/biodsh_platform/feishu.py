@@ -75,15 +75,27 @@ def status():
     return {"enabled": get_settings().feishu_login_enabled}
 
 
+class LoginStart(BaseModel):
+    invitation_token: str | None = Field(default=None, min_length=32, max_length=200)
+
+
 @router.post("/start")
-def start(db: Db):
+def start(db: Db, body: LoginStart | None = None):
     enabled()
     now = datetime.now(UTC)
     db.execute(delete(OAuthFlow).where(OAuthFlow.expires_at < now))
+    invitation_hash = digest(body.invitation_token) if body and body.invitation_token else None
+    if invitation_hash:
+        from biodsh_platform.invitations import validate
+
+        validate(db, invitation_hash)
     state, poll = secrets.token_urlsafe(32), secrets.token_urlsafe(48)
     db.add(
         OAuthFlow(
-            state_hash=digest(state), poll_hash=digest(poll), expires_at=now + timedelta(minutes=5)
+            invitation_hash=invitation_hash,
+            state_hash=digest(state),
+            poll_hash=digest(poll),
+            expires_at=now + timedelta(minutes=5),
         )
     )
     db.commit()
@@ -157,6 +169,9 @@ def callback(db: Db, state: str = "", code: str = "", error: str = ""):
                 user = db.get(User, record.user_id)
         if not user or not user.is_active:
             raise HTTPException(403, "此账号已被停用")
+        user.display_name = str(identity.get("name", ""))[:120]
+        avatar = str(identity.get("avatar_url", identity.get("avatar_big", "")))
+        user.avatar_url = avatar[:1000] if avatar.startswith("https://") else ""
         user.last_login_at = now
         db.execute(
             update(OAuthFlow)
@@ -205,11 +220,17 @@ def poll(body: Poll, db: Db):
     user = db.get(User, flow.user_id)
     if not user or not user.is_active:
         raise HTTPException(403, "账号已停用")
+    project_id = None
+    if flow.invitation_hash:
+        from biodsh_platform.invitations import accept
+
+        project_id = accept(db, flow.invitation_hash, user)
     access, expires = create_access_token(user)
     refresh, _ = issue_refresh_token(db, user)
     audit(db, "auth.feishu.login", actor_user_id=user.id)
     db.commit()
     return {
+        "project_id": project_id,
         "status": "ready",
         "access_token": access,
         "refresh_token": refresh,

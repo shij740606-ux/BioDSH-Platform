@@ -24,7 +24,10 @@ export default function LoginView() {
         await new Promise(resolve => setTimeout(resolve, 3000));
         if (attempt.current !== id) return;
         const result = await window.biodsh.platformFeishuPoll(flow.poll_token);
-        if (result.ready) { await refreshPlatform(); return; }
+        if (result.ready) {
+          if (result.projectId) await updateSettings({ currentProjectId: result.projectId });
+          await refreshPlatform(); return;
+        }
       }
       if (attempt.current === id) setError('飞书授权已超时，请重试');
     } catch (reason) { if (attempt.current === id) setError(String(reason)); }

@@ -22,6 +22,36 @@ def tenant_token():
     )["tenant_access_token"]
 
 
+def card(body: dict) -> dict:
+    status = str(body.get("status", "unknown"))
+    labels = {
+        "running": ("任务已开始", "blue"),
+        "succeeded": ("任务已完成", "green"),
+        "failed": ("任务失败", "red"),
+        "cancelled": ("任务已取消", "grey"),
+        "unknown": ("任务状态待确认", "orange"),
+    }
+    title, template = labels.get(status, ("任务状态更新", "blue"))
+    kind = str(body.get("kind", "分析任务"))
+    job_id = str(body.get("job_id", ""))
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"template": template, "title": {"tag": "plain_text", "content": title}},
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f"**分析类型：** {kind}\n**任务编号：** {job_id}\n"
+                        f"**当前状态：** {status}\n\n请在 BioDSH 桌面端查看日志和结果。"
+                    ),
+                },
+            }
+        ],
+    }
+
+
 def deliver_once():
     if not get_settings().feishu_notifications_enabled:
         return
@@ -67,8 +97,8 @@ def deliver_once():
                 "im/v1/messages?receive_id_type=chat_id",
                 dict(
                     receive_id=binding.chat_id,
-                    msg_type="text",
-                    content=json.dumps({"text": row.body["text"]}, ensure_ascii=False),
+                    msg_type="interactive",
+                    content=json.dumps(card(row.body), ensure_ascii=False),
                     uuid=row.id,
                 ),
                 tenant_token(),

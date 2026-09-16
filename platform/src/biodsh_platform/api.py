@@ -23,6 +23,7 @@ from biodsh_platform.models import (
     JobStatus,
     NodeMetric,
     NodeStatus,
+    NotificationOutbox,
     Project,
     ProjectChat,
     ProjectMember,
@@ -447,7 +448,7 @@ def list_project_members(
 ) -> list[ProjectMemberRead]:
     require_project(db, user, project_id)
     rows = db.execute(
-        select(ProjectMember, User.username)
+        select(ProjectMember, User)
         .join(User, User.id == ProjectMember.user_id)
         .where(ProjectMember.project_id == project_id)
         .order_by(User.username)
@@ -456,15 +457,18 @@ def list_project_members(
         ProjectMemberRead(
             project_id=member.project_id,
             user_id=member.user_id,
-            username=username,
+            username=person.username,
+            display_name=person.display_name,
+            avatar_url=person.avatar_url,
             role=member.role,
             created_at=member.created_at,
         )
-        for member, username in rows
+        for member, person in rows
     ]
 
 
 @api_router.put("/projects/{project_id}/members/{user_id}", response_model=ProjectMemberRead)
+@api_router.post("/projects/{project_id}/members/{user_id}", response_model=ProjectMemberRead)
 def set_project_member(
     project_id: str, user_id: str, body: MemberSet, db: DbSession, actor: CurrentUser
 ) -> ProjectMemberRead:
@@ -495,6 +499,8 @@ def set_project_member(
         project_id=project_id,
         user_id=user_id,
         username=target.username,
+        display_name=target.display_name,
+        avatar_url=target.avatar_url,
         role=member.role,
         created_at=member.created_at,
     )
@@ -529,6 +535,37 @@ def remove_project_member(project_id: str, user_id: str, db: DbSession, actor: C
         resource_id=user_id,
     )
     db.commit()
+
+
+@api_router.post("/projects/{project_id}/members/{user_id}/remove")
+def remove_project_member_action(
+    project_id: str, user_id: str, db: DbSession, actor: CurrentUser
+) -> dict:
+    remove_project_member(project_id, user_id, db, actor)
+    return {"removed": True}
+
+
+@api_router.get("/projects/{project_id}/notifications")
+def list_project_notifications(
+    project_id: str, db: DbSession, actor: CurrentUser, limit: int = 20
+) -> list[dict]:
+    require_project(db, actor, project_id, ProjectRole.OWNER)
+    rows = db.scalars(
+        select(NotificationOutbox)
+        .where(NotificationOutbox.project_id == project_id)
+        .order_by(NotificationOutbox.available_at.desc())
+        .limit(max(1, min(limit, 100)))
+    )
+    return [
+        {
+            "id": row.id,
+            "status": row.status,
+            "attempts": row.attempts,
+            "available_at": row.available_at,
+            "body": row.body,
+        }
+        for row in rows
+    ]
 
 
 @api_router.post(

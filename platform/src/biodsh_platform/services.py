@@ -62,10 +62,9 @@ def append_job_event(
                     event_key=key,
                     project_id=job.project_id,
                     body={
-                        "text": (
-                            f"BioDSH 分析任务 {job.kind}\n任务编号：{job.id}\n状态：{state}\n"
-                            "请在 BioDSH 桌面端打开对应项目查看日志与结果。"
-                        )
+                        "job_id": job.id,
+                        "kind": job.kind,
+                        "status": state,
                     },
                 )
             )

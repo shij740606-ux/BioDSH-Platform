@@ -241,7 +241,11 @@ export default function Sidebar() {
 
       <div className="px-3 pb-3 pt-2 hairline-t flex flex-col gap-1.5 relative">
         {platform.authenticated && <div className="px-2 py-2 rounded-lg flex flex-col gap-1.5" style={{ background: 'var(--fill)' }}>
-          <div className="flex items-center gap-2"><span className="t-body flex-1 truncate">{platform.user?.username}</span><button className="t-caption" onClick={() => void platformLogout()}>{t('退出')}</button></div>
+          <div className="flex items-center gap-2">
+            {platform.user?.avatarUrl && <img className="w-6 h-6 rounded-full" src={platform.user.avatarUrl} alt="" referrerPolicy="no-referrer" />}
+            <span className="t-body flex-1 truncate">{platform.user?.displayName || platform.user?.username}</span>
+            <button className="t-caption" onClick={() => void platformLogout()}>{t('退出')}</button>
+          </div>
           <select className="field !h-[30px] !py-0 t-caption" value={settings?.currentProjectId ?? ''} onChange={(e) => void updateSettings({ currentProjectId: e.target.value })}>
             <option value="">{t('选择平台项目')}</option>
             {platform.projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {t(p.role)}</option>)}

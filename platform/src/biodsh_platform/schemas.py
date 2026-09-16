@@ -48,6 +48,8 @@ class UserUpdate(WriteModel):
 
 
 class UserRead(ApiModel):
+    display_name: str = ""
+    avatar_url: str = ""
     id: str
     username: str
     is_active: bool
@@ -92,6 +94,8 @@ class MemberSet(WriteModel):
 
 
 class ProjectMemberRead(ApiModel):
+    display_name: str = ""
+    avatar_url: str = ""
     project_id: str
     user_id: str
     username: str

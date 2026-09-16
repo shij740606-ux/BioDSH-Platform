@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     auto_create_schema: bool = False
     project_node_authorization_enabled: bool = False
     feishu_notifications_enabled: bool = False
+    public_base_url: str = ""
     feishu_app_id: str = ""
     feishu_app_secret: SecretStr = SecretStr("")
     feishu_redirect_uri: str = ""
@@ -61,6 +62,23 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_environment_contract(self) -> "Settings":
+        if self.public_base_url:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(self.public_base_url)
+            if (
+                not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+            ):
+                raise ValueError("public_base_url must be an origin URL")
+            if parsed.scheme != "https" and not (
+                parsed.scheme == "http" and self.environment in {"development", "test"}
+            ):
+                raise ValueError("Production public URL requires HTTPS")
         if self.feishu_notifications_enabled and not (
             self.feishu_app_id and self.feishu_app_secret.get_secret_value()
         ):
