@@ -28,7 +28,7 @@ def test_worker_executes_profile_streams_log_and_uploads_result(
     monkeypatch.setattr(
         worker,
         "upload_artifact",
-        lambda settings, credentials, job_id, relative_path, source: {
+        lambda settings, credentials, job_id, relative_path, source, check_control=None: {
             "relative_path": relative_path,
             "size_bytes": source.stat().st_size,
         },

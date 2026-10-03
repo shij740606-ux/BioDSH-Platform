@@ -6,7 +6,6 @@ import mimetypes
 import os
 import platform
 import queue
-import signal
 import socket
 import subprocess
 import threading
@@ -14,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -23,6 +23,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from biodsh_platform import __version__
+from biodsh_platform.process_tree import ExecutorProcess, terminate_process
 from biodsh_platform.services import job_fits_node
 
 
@@ -288,6 +289,7 @@ def upload_artifact(
     job_id: str,
     relative_path: str,
     source: Path,
+    check_control: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     parsed = urllib.parse.urlsplit(credentials["base_url"])
     resource = (
@@ -302,41 +304,128 @@ def upload_artifact(
         parsed.port,
         timeout=settings.request_timeout_seconds,
     )
-    size = source.stat().st_size
-    connection.putrequest("PUT", resource)
-    for name, value in node_headers(credentials).items():
-        connection.putheader(name, value)
-    connection.putheader("Content-Length", str(size))
-    connection.putheader(
-        "Content-Type", mimetypes.guess_type(relative_path)[0] or "application/octet-stream"
-    )
-    connection.endheaders()
-    with source.open("rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            connection.send(chunk)
-    response = connection.getresponse()
-    payload = response.read()
-    connection.close()
+    try:
+        size = source.stat().st_size
+        connection.putrequest("PUT", resource)
+        for name, value in node_headers(credentials).items():
+            connection.putheader(name, value)
+        connection.putheader("Content-Length", str(size))
+        connection.putheader(
+            "Content-Type", mimetypes.guess_type(relative_path)[0] or "application/octet-stream"
+        )
+        connection.endheaders()
+        with source.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                if check_control:
+                    check_control()
+                connection.send(chunk)
+        if check_control:
+            check_control()
+        response = connection.getresponse()
+        payload = response.read()
+    finally:
+        connection.close()
     if response.status >= 300:
         detail = payload.decode(errors="replace")[:500]
         raise RuntimeError(f"artifact upload returned HTTP {response.status}: {detail}")
     return json.loads(payload)
 
 
-def terminate_process(process: subprocess.Popen[str], grace_seconds: int) -> None:
-    if process.poll() is not None:
-        return
-    if os.name == "nt":
-        process.terminate()
-    else:
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=grace_seconds)
-    except subprocess.TimeoutExpired:
-        if os.name == "nt":
-            process.kill()
-        else:
-            os.killpg(process.pid, signal.SIGKILL)
+class JobCancelled(Exception):
+    pass
+
+
+class ExecutionControl:
+    """Independent control requests keep leases alive during blocking I/O.
+
+    Each request owns its connection. Metrics run separately so sampling or a
+    slow heartbeat cannot prevent lease renewal. No HTTP session is shared.
+    """
+
+    def __init__(self, settings, credentials, capabilities, job_id, process):
+        self.settings = settings
+        self.credentials = credentials
+        self.capabilities = capabilities
+        self.job_id = job_id
+        self.process = process
+        self.stopped = threading.Event()
+        self.cancelled = threading.Event()
+        self.abort = threading.Event()
+        self.failure: Exception | None = None
+        self.termination_lock = threading.Lock()
+        self.tree_terminated = False
+        self.threads: list[threading.Thread] = []
+
+    def terminate(self) -> None:
+        with self.termination_lock:
+            if not self.tree_terminated:
+                terminate_process(self.process, self.settings.cancel_grace_seconds)
+                self.tree_terminated = True
+
+    def check(self) -> None:
+        if self.failure is not None:
+            raise RuntimeError(f"job supervision failed: {self.failure}") from self.failure
+        if self.cancelled.is_set():
+            raise JobCancelled()
+
+    def _control(self) -> None:
+        while not self.stopped.is_set():
+            control = request_json(
+                api_url(
+                    self.credentials,
+                    f"/nodes/{self.credentials['node_id']}/jobs/{self.job_id}/control",
+                ),
+                method="POST",
+                headers=node_headers(self.credentials),
+                body={},
+                timeout=self.settings.request_timeout_seconds,
+            )
+            if control["cancel_requested"] and not self.cancelled.is_set():
+                self.cancelled.set()
+                self.abort.set()
+            if self.stopped.wait(min(self.settings.heartbeat_seconds, 5)):
+                return
+
+    def _heartbeat(self) -> None:
+        while not self.stopped.is_set():
+            send_heartbeat(self.settings, self.credentials, self.capabilities, 1)
+            if self.stopped.wait(self.settings.heartbeat_seconds):
+                return
+
+    def _terminator(self) -> None:
+        self.abort.wait()
+        self.terminate()
+
+    def _run(self, action: Callable[[], None]) -> None:
+        try:
+            action()
+        except Exception as exc:
+            if not self.stopped.is_set():
+                self.failure = exc
+                self.abort.set()
+
+    def __enter__(self):
+        try:
+            for action in (self._control, self._heartbeat, self._terminator):
+                thread = threading.Thread(target=self._run, args=(action,), daemon=True)
+                thread.start()
+                self.threads.append(thread)
+        except BaseException:
+            self.__exit__()
+            raise
+        return self
+
+    def __exit__(self, *_):
+        self.stopped.set()
+        self.abort.set()
+        try:
+            self.terminate()
+        finally:
+            for thread in self.threads:
+                thread.join()
+            self.process.close_tree()
+            if self.process.stdout is not None:
+                self.process.stdout.close()
 
 
 def execute_job(
@@ -434,8 +523,7 @@ def execute_job(
         body={},
         timeout=settings.request_timeout_seconds,
     )
-    creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    process = subprocess.Popen(
+    process = ExecutorProcess(
         command,
         cwd=job_dir,
         env=environment,
@@ -446,8 +534,6 @@ def execute_job(
         errors="replace",
         bufsize=1,
         shell=False,
-        start_new_session=os.name != "nt",
-        creationflags=creation_flags,
     )
     output: queue.Queue[str | None] = queue.Queue()
 
@@ -457,98 +543,84 @@ def execute_job(
             output.put(line.rstrip("\r\n"))
         output.put(None)
 
-    reader = threading.Thread(target=read_output, daemon=True)
-    reader.start()
-    started = time.monotonic()
-    last_heartbeat = 0.0
-    cancelled = False
-    timeout_seconds = int(profile.get("timeout_seconds", 86_400))
-    while process.poll() is None:
-        pending_lines: list[str] = []
-        pending_size = 0
-        while True:
-            try:
+    with ExecutionControl(settings, credentials, node_capabilities, job["id"], process) as guard:
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
+        started = time.monotonic()
+        timeout_seconds = int(profile.get("timeout_seconds", 86_400))
+        artifacts: list[dict[str, Any]] = []
+        try:
+            while process.poll() is None:
+                guard.check()
+                pending_lines: list[str] = []
+                pending_size = 0
+                while True:
+                    try:
+                        line = output.get_nowait()
+                    except queue.Empty:
+                        break
+                    if line:
+                        pending_lines.append(line)
+                        pending_size += len(line) + 1
+                        if pending_size >= 7000:
+                            break
+                if pending_lines:
+                    post_job_event(settings, credentials, job["id"], "\n".join(pending_lines))
+                if time.monotonic() - started > timeout_seconds:
+                    raise RuntimeError(
+                        f"job exceeded executor timeout of {timeout_seconds} seconds"
+                    )
+                time.sleep(0.2)
+            # The leader may have left children holding stdout or writing results.
+            guard.terminate()
+            reader.join(timeout=5)
+            while not output.empty():
+                guard.check()
                 line = output.get_nowait()
-            except queue.Empty:
-                break
-            if line:
-                pending_lines.append(line)
-                pending_size += len(line) + 1
-                if pending_size >= 7000:
-                    break
-        if pending_lines:
-            try:
-                post_job_event(settings, credentials, job["id"], "\n".join(pending_lines))
-            except (OSError, RuntimeError):
-                terminate_process(process, settings.cancel_grace_seconds)
-                raise
-        now = time.monotonic()
-        if now - last_heartbeat >= settings.heartbeat_seconds:
-            try:
-                send_heartbeat(settings, credentials, node_capabilities, 1)
-                control = request_json(
-                    api_url(
-                        credentials,
-                        f"/nodes/{credentials['node_id']}/jobs/{job['id']}/control",
-                    ),
-                    method="POST",
-                    headers=node_headers(credentials),
-                    body={},
-                    timeout=settings.request_timeout_seconds,
-                )
-            except (OSError, RuntimeError):
-                terminate_process(process, settings.cancel_grace_seconds)
-                raise
-            last_heartbeat = now
-            if control["cancel_requested"]:
-                cancelled = True
-                terminate_process(process, settings.cancel_grace_seconds)
-        if now - started > timeout_seconds:
-            terminate_process(process, settings.cancel_grace_seconds)
-            raise RuntimeError(f"job exceeded executor timeout of {timeout_seconds} seconds")
-        time.sleep(0.2)
-    reader.join(timeout=5)
-    while not output.empty():
-        line = output.get_nowait()
-        if line:
-            post_job_event(settings, credentials, job["id"], line)
-    exit_code = process.returncode
-    artifacts: list[dict[str, Any]] = []
-    result_globs = profile.get("result_globs", [])
-    if not isinstance(result_globs, list) or not all(
-        isinstance(value, str) for value in result_globs
-    ):
-        raise RuntimeError("executor result_globs must be an array of strings")
-    seen: set[Path] = set()
-    for pattern in result_globs:
-        for result in job_dir.glob(pattern):
-            if result.is_file() and result not in seen:
-                resolved = result.resolve()
-                if job_dir.resolve() not in resolved.parents:
-                    raise RuntimeError(f"result file escapes the job workspace: {result}")
-                seen.add(result)
-                relative = result.relative_to(job_dir).as_posix()
-                artifacts.append(
-                    upload_artifact(settings, credentials, job["id"], relative, result)
-                )
-    final_status = "cancelled" if cancelled else "succeeded" if exit_code == 0 else "failed"
-    request_json(
-        api_url(
-            credentials,
-            f"/nodes/{credentials['node_id']}/jobs/{job['id']}/complete",
-        ),
-        method="POST",
-        headers=node_headers(credentials),
-        body={
-            "status": final_status,
-            "exit_code": exit_code,
-            "error_message": ""
-            if final_status == "succeeded"
-            else f"process exited with code {exit_code}",
-            "result_manifest": {"artifacts": artifacts},
-        },
-        timeout=settings.request_timeout_seconds,
-    )
+                if line:
+                    post_job_event(settings, credentials, job["id"], line)
+            guard.check()
+            result_globs = profile.get("result_globs", [])
+            if not isinstance(result_globs, list) or not all(
+                isinstance(value, str) for value in result_globs
+            ):
+                raise RuntimeError("executor result_globs must be an array of strings")
+            seen: set[Path] = set()
+            for pattern in result_globs:
+                for result in job_dir.glob(pattern):
+                    guard.check()
+                    if result.is_file() and result not in seen:
+                        resolved = result.resolve()
+                        if job_dir.resolve() not in resolved.parents:
+                            raise RuntimeError(f"result file escapes the job workspace: {result}")
+                        seen.add(result)
+                        relative = result.relative_to(job_dir).as_posix()
+                        artifacts.append(
+                            upload_artifact(
+                                settings, credentials, job["id"], relative, result, guard.check
+                            )
+                        )
+            guard.check()
+            final_status = "succeeded" if process.returncode == 0 else "failed"
+        except JobCancelled:
+            guard.terminate()
+            final_status = "cancelled"
+        request_json(
+            api_url(credentials, f"/nodes/{credentials['node_id']}/jobs/{job['id']}/complete"),
+            method="POST",
+            headers=node_headers(credentials),
+            body={
+                "status": final_status,
+                "exit_code": process.returncode,
+                "error_message": ""
+                if final_status == "succeeded"
+                else "cancelled by request"
+                if final_status == "cancelled"
+                else f"process exited with code {process.returncode}",
+                "result_manifest": {"artifacts": artifacts},
+            },
+            timeout=settings.request_timeout_seconds,
+        )
 
 
 def heartbeat(settings: WorkerSettings, *, once: bool = False) -> None:

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from biodsh_platform.models import (
@@ -29,6 +29,28 @@ def get_job_or_404(db: Session, job_id: str) -> Job:
     return job
 
 
+def lock_job(db: Session, job_id: str, *, refresh: bool = True) -> Job:
+    """Serialize job writes until commit/rollback, including on SQLite.
+
+    PostgreSQL takes a row write lock; SQLite takes its database write lock.
+    A no-op UPDATE is used because SQLite ignores SELECT FOR UPDATE. Refresh
+    only before modifying a job, never after a caller has staged its transition.
+    """
+    with db.no_autoflush:
+        locked = db.execute(
+            update(Job)
+            .where(Job.id == job_id)
+            .values(updated_at=Job.updated_at)
+            .execution_options(synchronize_session=False)
+        )
+        if locked.rowcount != 1:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job = get_job_or_404(db, job_id)
+        if refresh:
+            db.refresh(job)
+    return job
+
+
 def append_job_event(
     db: Session,
     job: Job,
@@ -37,6 +59,10 @@ def append_job_event(
     message: str,
     payload: dict | None = None,
 ) -> JobEvent:
+    lock_job(db, job.id, refresh=False)
+    # SessionLocal disables autoflush. Persist earlier events in this transaction
+    # before allocating another sequence, while holding the same job lock.
+    db.flush()
     current = db.scalar(select(func.max(JobEvent.sequence)).where(JobEvent.job_id == job.id))
     event = JobEvent(
         job_id=job.id,
@@ -72,6 +98,7 @@ def append_job_event(
 
 
 def request_job_cancellation(db: Session, job: Job) -> Job:
+    job = lock_job(db, job.id)
     current = JobStatus(job.status)
     if current not in CANCELLABLE_STATUSES:
         raise HTTPException(

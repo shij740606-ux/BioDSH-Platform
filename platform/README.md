@@ -82,3 +82,31 @@ uv export --frozen --no-dev --no-hashes --no-emit-project --output-file requirem
 ```
 
 All production work follows `docs/engineering-standards.zh.md`. The milestone is ready for staging only after migrations, desktop login, token storage, and cross-project checks pass against the staging PostgreSQL deployment.
+
+### Worker lifecycle regression checks
+
+Lease renewal runs independently of process output, metrics, result uploads, and
+process-tree termination. Cancellation stops further result transfers; a blocked
+socket operation remains bounded by `BIODSH_WORKER_REQUEST_TIMEOUT_SECONDS`.
+Windows executors start suspended, enter a kill-on-close Job Object, then resume;
+failure to establish this containment fails execution. POSIX executors use a new
+process group and escalate termination for the whole group even when its leader
+has already exited. Executors must not deliberately detach into another session.
+
+Task state changes, lease renewal/recovery and event sequence allocation use one
+transactional job write lock (row-level on PostgreSQL, database-level on SQLite).
+Artifact streaming holds no job write lock and revalidates state before publishing
+the artifact. No schema migration or dependency change is required.
+
+The normal test suite includes concurrent SQLite transactions, real process-tree
+cleanup, and a slow local HTTP upload with cancellation. PostgreSQL concurrency
+checks run when `BIODSH_TEST_POSTGRES_URL` points to a **dedicated test database**;
+they create and drop an isolated `biodsh_test_*` schema for each test. Without that
+variable they are explicitly skipped. CI provides PostgreSQL 16 and tests the
+Worker separately on Windows; the Linux job covers POSIX process groups.
+
+```powershell
+$env:BIODSH_TEST_POSTGRES_URL = "postgresql+psycopg://test:test@127.0.0.1:5432/biodsh_test"
+uv run pytest -q tests/test_job_concurrency.py
+uv run pytest -q tests/test_worker.py tests/test_worker_supervision.py tests/test_process_tree.py
+```

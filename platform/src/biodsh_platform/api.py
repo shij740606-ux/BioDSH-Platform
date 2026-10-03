@@ -81,6 +81,7 @@ from biodsh_platform.security import (
 from biodsh_platform.services import (
     append_job_event,
     get_job_or_404,
+    lock_job,
     request_job_cancellation,
 )
 
@@ -107,8 +108,8 @@ def aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
-def assigned_job(db: Session, node: ComputeNode, job_id: str) -> Job:
-    job = db.get(Job, job_id)
+def assigned_job(db: Session, node: ComputeNode, job_id: str, *, lock: bool = True) -> Job:
+    job = lock_job(db, job_id) if lock else db.get(Job, job_id)
     if job is None or job.node_id != node.id:
         raise HTTPException(status_code=404, detail="Assigned job not found")
     return job
@@ -700,7 +701,8 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
     now = datetime.now(UTC)
     expired = list(
         db.scalars(
-            select(Job).where(
+            select(Job)
+            .where(
                 Job.lease_expires_at < now,
                 Job.status.in_(
                     [
@@ -711,9 +713,24 @@ def claim_job(node_id: str, body: WorkerClaim, db: DbSession, node: NodeActor) -
                     ]
                 ),
             )
+            .order_by(Job.id)
         )
     )
     for stale in expired:
+        stale = lock_job(db, stale.id)
+        # A control/complete request may have won the row lock after our scan.
+        if (
+            stale.lease_expires_at is None
+            or aware(stale.lease_expires_at) >= now
+            or stale.status
+            not in {
+                JobStatus.ASSIGNED,
+                JobStatus.PREPARING,
+                JobStatus.RUNNING,
+                JobStatus.CANCELLING,
+            }
+        ):
+            continue
         if stale.status == JobStatus.ASSIGNED:
             stale.status = JobStatus.QUEUED
             stale.node_id = None
@@ -889,9 +906,13 @@ async def upload_job_artifact(
 ) -> JobArtifact:
     if node.id != node_id:
         raise HTTPException(status_code=403, detail="Node credential does not match resource")
-    job = assigned_job(db, node, job_id)
+    job = assigned_job(db, node, job_id, lock=False)
     if job.status not in {JobStatus.RUNNING, JobStatus.CANCELLING}:
         raise HTTPException(status_code=409, detail="Job is not accepting artifacts")
+    attempt = job.attempt
+    # Do not hold a transaction/row lock over a slow request body. The worker
+    # must be able to renew the lease or cancel while this stream is in flight.
+    db.commit()
     relative_path = artifact_relative_path(relative_path)
     settings = get_settings()
     content_length = request.headers.get("content-length")
@@ -917,6 +938,9 @@ async def upload_job_artifact(
                     raise HTTPException(status_code=413, detail="Artifact exceeds configured limit")
                 digest.update(chunk)
                 handle.write(chunk)
+        job = assigned_job(db, node, job_id)
+        if job.attempt != attempt or job.status not in {JobStatus.RUNNING, JobStatus.CANCELLING}:
+            raise HTTPException(status_code=409, detail="Job is not accepting artifacts")
         temporary.replace(target)
     except Exception:
         temporary.unlink(missing_ok=True)
