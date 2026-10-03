@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import type { AppSettings, CatalogSkill, CredentialStatus, DshStatus, EnvStatus, SkillStatus } from '@shared/types';
+import type { AppSettings, CatalogSkill, CredentialStatus, DshStatus, EnvStatus, PlatformSession, SkillStatus } from '@shared/types';
 
-export type Tab = 'chat' | 'data' | 'db' | 'store' | 'env' | 'settings';
+export type Tab = 'chat' | 'data' | 'db' | 'knowledge' | 'hosts' | 'tasks' | 'servers' | 'store' | 'env' | 'settings';
 
 interface AppState {
   ready: boolean;
   info: { version: string; platform: string; paths: Record<string, string>; dark: boolean } | null;
   settings: AppSettings | null;
+  platform: PlatformSession;
   credential: CredentialStatus;
   env: EnvStatus;
   dsh: DshStatus;
@@ -22,6 +23,9 @@ interface AppState {
   setCurrentSession: (id: string | null) => void;
   refresh: () => Promise<void>;
   updateSettings: (p: Partial<AppSettings>) => Promise<void>;
+  platformLogin: (username: string, password: string) => Promise<void>;
+  platformLogout: () => Promise<void>;
+  refreshPlatform: () => Promise<void>;
   saveKey: (k: string) => Promise<void>;
   installEnv: () => Promise<void>;
   startDsh: () => Promise<void>;
@@ -40,6 +44,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [info, setInfo] = useState<AppState['info']>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [platform, setPlatform] = useState<PlatformSession>({ authenticated: false, projects: [] });
   const [credential, setCredential] = useState<CredentialStatus>({ hasKey: false });
   const [env, setEnv] = useState<EnvStatus>(emptyEnv);
   const [dsh, setDsh] = useState<DshStatus>({ state: 'stopped', log: [] });
@@ -58,7 +63,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const [i, s, c, e, d, cat, st] = await Promise.all([
       api.appInfo(), api.getSettings(), api.getCredential(), api.envStatus(), api.dshStatus(), api.skillsCatalog(), api.skillsStatuses(),
     ]);
-    setInfo(i); setSettings(s); setCredential(c); setEnv(e); setDsh(d); setCatalog(cat); setStatuses(toMap(st));
+    const session = await api.platformSession().catch(() => ({ authenticated: false, projects: [] } as PlatformSession));
+    let nextSettings = s;
+    if (session.authenticated && !session.projects.some((project) => project.id === s.currentProjectId)) {
+      nextSettings = await api.setSettings({ currentProjectId: session.projects[0]?.id ?? '' });
+    }
+    setInfo(i); setSettings(nextSettings); setCredential(c); setEnv(e); setDsh(d); setCatalog(cat); setStatuses(toMap(st));
+    setPlatform(session);
     setReady(true);
   }, []);
 
@@ -73,7 +84,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return off;
   }, [refresh]);
 
+  useEffect(() => {
+    if (!settings?.ragflowUrl) return;
+    const sync = () => { void api.knowledgeSyncFolders().catch(() => undefined); };
+    sync(); const timer = setInterval(sync, 60_000); return () => clearInterval(timer);
+  }, [settings?.ragflowUrl]);
+
   const updateSettings = async (p: Partial<AppSettings>) => setSettings(await api.setSettings(p));
+  const platformLogin = async (username: string, password: string) => {
+    const session = await api.platformLogin(username, password);
+    setPlatform(session);
+    const selected = session.projects.some((project) => project.id === settings?.currentProjectId)
+      ? settings?.currentProjectId
+      : session.projects[0]?.id ?? '';
+    if (selected !== (settings?.currentProjectId ?? '')) {
+      setSettings(await api.setSettings({ currentProjectId: selected }));
+    }
+  };
+  const platformLogout = async () => {
+    setPlatform(await api.platformLogout());
+    setSettings(await api.setSettings({ currentProjectId: '' }));
+  };
+  const refreshPlatform = async () => setPlatform(await api.platformSession());
   const saveKey = async (k: string) => setCredential(await api.setCredential(k));
   const installEnv = async () => { setEnv(await api.envInstall()); };
   const startDsh = async () => { setDsh(await api.dshStart()); };
@@ -89,7 +121,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <Ctx.Provider value={{ ready, info, settings, credential, env, dsh, catalog, statuses, busy, tab, setTab, overlay, pushOverlay, popOverlay, currentSession, setCurrentSession, refresh, updateSettings, saveKey, installEnv, startDsh, restartDsh, install, uninstall }}>
+    <Ctx.Provider value={{ ready, info, settings, platform, credential, env, dsh, catalog, statuses, busy, tab, setTab, overlay, pushOverlay, popOverlay, currentSession, setCurrentSession, refresh, updateSettings, platformLogin, platformLogout, refreshPlatform, saveKey, installEnv, startDsh, restartDsh, install, uninstall }}>
       {children}
     </Ctx.Provider>
   );

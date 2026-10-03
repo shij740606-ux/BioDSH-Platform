@@ -1,0 +1,22 @@
+[Unit]
+Description=BioDSH compute worker and resource reporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=biodsh
+Group=biodsh
+EnvironmentFile=/etc/biodsh/worker.env
+ExecStart=/opt/biodsh-worker/.venv/bin/biodsh-worker run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/biodsh
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

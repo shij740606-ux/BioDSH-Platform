@@ -1,0 +1,115 @@
+name: Platform CI
+
+on:
+  pull_request:
+    paths:
+      - "platform/**"
+      - "deploy/**"
+      - "desktop/src/**"
+      - "desktop/src-tauri/**"
+      - ".github/workflows/platform-ci.yml"
+  push:
+    branches: [main, "feature/**", "fix/**"]
+    paths:
+      - "platform/**"
+      - "deploy/**"
+      - "desktop/src/**"
+      - "desktop/src-tauri/**"
+      - ".github/workflows/platform-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: biodsh_test
+          POSTGRES_PASSWORD: biodsh_test_only
+          POSTGRES_DB: biodsh_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U biodsh_test -d biodsh_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BIODSH_DATABASE_URL: sqlite:///./ci-platform.db
+      BIODSH_PLATFORM_TOKEN: ci-platform-bootstrap-token
+      BIODSH_JWT_SECRET: ci-jwt-secret-that-is-at-least-thirty-two-characters
+      BIODSH_ENVIRONMENT: test
+      BIODSH_TEST_POSTGRES_URL: postgresql+psycopg://biodsh_test:biodsh_test_only@127.0.0.1:5432/biodsh_test
+    defaults:
+      run:
+        working-directory: platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked toolchain
+        run: python -m pip install uv==0.12.3
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+      - name: Verify container dependency lock
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project --output-file requirements.txt
+          git diff --exit-code -- requirements.txt
+      - name: Lint
+        run: uv run ruff check .
+      - name: Verify migrations
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+      - name: Test
+        run: uv run pytest -q
+
+  worker-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install locked toolchain
+        run: python -m pip install uv==0.12.3
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+      - name: Test Windows executor tree and supervision
+        run: uv run pytest -q tests/test_worker.py tests/test_worker_supervision.py tests/test_process_tree.py
+
+  desktop-types:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Type check
+        run: npm run typecheck
+      - name: Build desktop web bundles
+        run: npm run build
+      - name: Prepare Tauri check resources
+        run: |
+          New-Item -ItemType Directory -Force `
+            resources/node/win32-x64, `
+            resources/bin/win32-x64, `
+            resources/skills, `
+            resources/community-skills, `
+            dsh-runtime/node_modules | Out-Null
+      - name: Check Tauri backend
+        working-directory: desktop/src-tauri
+        run: cargo check --locked

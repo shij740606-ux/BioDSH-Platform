@@ -1,0 +1,92 @@
+services:
+  gateway:
+    image: ${CADDY_IMAGE:?set CADDY_IMAGE to a reviewed version}
+    restart: unless-stopped
+    environment:
+      BIODSH_DOMAIN: ${BIODSH_DOMAIN:?set BIODSH_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - biodsh-caddy-data:/data
+      - biodsh-caddy-config:/config
+    depends_on:
+      platform:
+        condition: service_healthy
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?set POSTGRES_IMAGE to a reviewed version}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - biodsh-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  platform:
+    build:
+      context: ../platform
+    restart: unless-stopped
+    environment:
+      BIODSH_ENVIRONMENT: production
+      BIODSH_SERVICE_NAME: ${BIODSH_SERVICE_NAME:?set BIODSH_SERVICE_NAME}
+      BIODSH_HOST: 0.0.0.0
+      BIODSH_PORT: ${BIODSH_CONTAINER_PORT:?set BIODSH_CONTAINER_PORT}
+      BIODSH_LOG_LEVEL: ${BIODSH_LOG_LEVEL:?set BIODSH_LOG_LEVEL}
+      BIODSH_API_PREFIX: ${BIODSH_API_PREFIX:?set BIODSH_API_PREFIX}
+      BIODSH_DOCS_ENABLED: ${BIODSH_DOCS_ENABLED:?set BIODSH_DOCS_ENABLED}
+      BIODSH_DATABASE_URL: ${BIODSH_DATABASE_URL:?set BIODSH_DATABASE_URL}
+      BIODSH_DATABASE_POOL_SIZE: ${BIODSH_DATABASE_POOL_SIZE:?set BIODSH_DATABASE_POOL_SIZE}
+      BIODSH_DATABASE_MAX_OVERFLOW: ${BIODSH_DATABASE_MAX_OVERFLOW:?set BIODSH_DATABASE_MAX_OVERFLOW}
+      BIODSH_PLATFORM_TOKEN: ${BIODSH_PLATFORM_TOKEN:?set BIODSH_PLATFORM_TOKEN}
+      BIODSH_JWT_SECRET: ${BIODSH_JWT_SECRET:?set BIODSH_JWT_SECRET}
+      BIODSH_JWT_ISSUER: ${BIODSH_JWT_ISSUER:?set BIODSH_JWT_ISSUER}
+      BIODSH_JWT_AUDIENCE: ${BIODSH_JWT_AUDIENCE:?set BIODSH_JWT_AUDIENCE}
+      BIODSH_ACCESS_TOKEN_MINUTES: ${BIODSH_ACCESS_TOKEN_MINUTES:?set BIODSH_ACCESS_TOKEN_MINUTES}
+      BIODSH_REFRESH_TOKEN_DAYS: ${BIODSH_REFRESH_TOKEN_DAYS:?set BIODSH_REFRESH_TOKEN_DAYS}
+      BIODSH_LOGIN_MAX_ATTEMPTS: ${BIODSH_LOGIN_MAX_ATTEMPTS:?set BIODSH_LOGIN_MAX_ATTEMPTS}
+      BIODSH_LOGIN_LOCK_MINUTES: ${BIODSH_LOGIN_LOCK_MINUTES:?set BIODSH_LOGIN_LOCK_MINUTES}
+      BIODSH_NODE_OFFLINE_SECONDS: ${BIODSH_NODE_OFFLINE_SECONDS:?set BIODSH_NODE_OFFLINE_SECONDS}
+      BIODSH_METRICS_RETENTION_DAYS: ${BIODSH_METRICS_RETENTION_DAYS:?set BIODSH_METRICS_RETENTION_DAYS}
+      BIODSH_JOB_LEASE_SECONDS: ${BIODSH_JOB_LEASE_SECONDS:?set BIODSH_JOB_LEASE_SECONDS}
+      BIODSH_ARTIFACT_ROOT: /var/lib/biodsh/artifacts
+      BIODSH_ARTIFACT_MAX_BYTES: ${BIODSH_ARTIFACT_MAX_BYTES:?set BIODSH_ARTIFACT_MAX_BYTES}
+      BIODSH_AUTO_CREATE_SCHEMA: "false"
+      BIODSH_CORS_ORIGINS: ${BIODSH_CORS_ORIGINS:?set BIODSH_CORS_ORIGINS}
+      BIODSH_PROJECT_NODE_AUTHORIZATION_ENABLED: ${BIODSH_PROJECT_NODE_AUTHORIZATION_ENABLED:-true}
+      BIODSH_PUBLIC_BASE_URL: ${BIODSH_PUBLIC_BASE_URL:-}
+      BIODSH_FEISHU_APP_ID: ${BIODSH_FEISHU_APP_ID:-}
+      BIODSH_FEISHU_APP_SECRET: ${BIODSH_FEISHU_APP_SECRET:-}
+      BIODSH_FEISHU_REDIRECT_URI: ${BIODSH_FEISHU_REDIRECT_URI:-}
+      BIODSH_FEISHU_ALLOWED_TENANTS: ${BIODSH_FEISHU_ALLOWED_TENANTS:-[]}
+      BIODSH_FEISHU_LOGIN_ENABLED: ${BIODSH_FEISHU_LOGIN_ENABLED:-false}
+      BIODSH_FEISHU_NOTIFICATIONS_ENABLED: ${BIODSH_FEISHU_NOTIFICATIONS_ENABLED:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "${BIODSH_CONTAINER_PORT:?set BIODSH_CONTAINER_PORT}"
+    volumes:
+      - biodsh-artifacts:/var/lib/biodsh/artifacts
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  biodsh-postgres:
+  biodsh-artifacts:
+  biodsh-caddy-data:
+  biodsh-caddy-config:

@@ -69,6 +69,14 @@ export interface AppSettings {
   offlineApiKey: string;
   /** 离线模式可选：连接已部署在 Linux 服务器上的 dsh（不在本机启动） */
   remoteDshUrl: string;
+  /** BioDSH 统一平台地址；多用户和多服务器功能通过该入口访问 */
+  platformUrl: string;
+  /** 当前选中的平台项目 */
+  currentProjectId: string;
+  /** RAGFlow 服务地址；API 密钥单独保存在系统安全存储 */
+  ragflowUrl: string;
+  /** 知识库解析位置：本机 RAGFlow 或远程服务器 RAGFlow */
+  ragflowMode: 'local' | 'server';
   /** 图像生成：OpenAI 兼容 images 接口（智谱 CogView / OpenAI / SiliconFlow / 通义万相） */
   imageBaseUrl: string;
   imageApiKey: string;
@@ -77,6 +85,160 @@ export interface AppSettings {
   mcpServers: McpServer[];
   demosSeeded: boolean;
 }
+
+export interface PlatformStatus {
+  status: string;
+  service: string;
+  version: string;
+  database: string;
+}
+
+export type PlatformRole = 'admin' | 'owner' | 'analyst' | 'viewer';
+export interface PlatformUser { id: string; username: string; displayName?: string; avatarUrl?: string; isActive: boolean; isAdmin: boolean }
+export interface PlatformProject { id: string; name: string; description: string; role: PlatformRole }
+export interface PlatformSession {
+  authenticated: boolean;
+  user?: PlatformUser;
+  projects: PlatformProject[];
+}
+
+export type PlatformNodeStatus = 'online' | 'offline' | 'draining' | 'disabled';
+export type PlatformNodeControlStatus = Exclude<PlatformNodeStatus, 'offline'>;
+export interface PlatformGpuMetric {
+  index: number;
+  name: string;
+  uuid?: string;
+  utilization_percent?: number;
+  memory_used_mib?: number;
+  memory_total_mib?: number;
+  temperature_c?: number;
+}
+export interface PlatformNodeMetric {
+  id: number;
+  nodeId: string;
+  cpuPercent: number;
+  loadOne?: number;
+  memoryUsedBytes: number;
+  memoryTotalBytes: number;
+  memoryPercent: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  diskPercent: number;
+  networkRxBytes: number;
+  networkTxBytes: number;
+  runningJobs: number;
+  gpus: PlatformGpuMetric[];
+  collectedAt: string;
+}
+export interface PlatformNode {
+  id: string;
+  name: string;
+  status: PlatformNodeStatus;
+  hostname: string;
+  operatingSystem: string;
+  agentVersion: string;
+  capabilities: Record<string, unknown>;
+  latestMetric?: PlatformNodeMetric;
+  lastHeartbeatAt?: string;
+}
+
+export type PlatformJobStatus = 'queued' | 'assigned' | 'preparing' | 'running' | 'cancelling' | 'cancelled' | 'succeeded' | 'failed' | 'unknown';
+export interface PlatformJob {
+  id: string;
+  projectId: string;
+  nodeId?: string;
+  kind: string;
+  status: PlatformJobStatus;
+  payload: Record<string, unknown>;
+  requestedResources: Record<string, number>;
+  priority: number;
+  attempt: number;
+  assignedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number;
+  resultManifest: Record<string, unknown>;
+  errorMessage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface PlatformJobEvent {
+  id: number;
+  jobId: string;
+  sequence: number;
+  kind: string;
+  message: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+export interface PlatformJobArtifact {
+  id: string;
+  jobId: string;
+  relativePath: string;
+  sizeBytes: number;
+  sha256: string;
+  contentType: string;
+  createdAt: string;
+}
+export interface PlatformJobCreate {
+  nodeIds?: string[];
+  projectId: string;
+  kind: string;
+  arguments: string[];
+  requestedResources: Record<string, number>;
+  priority?: number;
+}
+
+export interface KnowledgeCredentialStatus { configured: boolean; masked?: string }
+export interface KnowledgeDataset {
+  id: string;
+  name: string;
+  description: string;
+  documentCount: number;
+  chunkCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+export interface KnowledgeDocument {
+  id: string;
+  datasetId: string;
+  name: string;
+  sizeBytes: number;
+  chunkCount: number;
+  tokenCount: number;
+  status: 'waiting' | 'parsing' | 'ready' | 'failed';
+  progress: number;
+  createdAt?: string;
+  localPath?: string;
+}
+export interface KnowledgeCitation {
+  id: string;
+  datasetId: string;
+  documentId: string;
+  documentName: string;
+  content: string;
+  similarity: number;
+  page?: number;
+}
+export interface KnowledgeFolder {
+  datasetId: string;
+  path: string;
+  enabled: boolean;
+  fileCount: number;
+  lastSyncAt?: string;
+  error?: string;
+}
+export interface KnowledgeSyncResult { uploaded: number; skipped: number; failed: number }
+
+export interface SshHost {
+  id: string; name: string; host: string; port: number; username: string;
+  workerNodeId?: string; auth: 'password' | 'key'; selected: boolean; fingerprint?: string; hostKey?: string;
+}
+export interface SshHostDraft {
+  id?: string; name: string; host: string; port: number; username: string;
+  auth: 'password' | 'key'; password?: string; privateKey?: string; passphrase?: string;
+}
+export interface SshProbe { fingerprint: string; hostKey: string; connected?: boolean }
 
 export interface McpServer {
   name: string;
@@ -103,3 +265,14 @@ export type IpcEvent =
   | { type: 'skills'; statuses: SkillStatus[] }
   | { type: 'skill-progress'; id: string; message: string }
   | { type: 'refdata'; id: string; received: number; total: number; done?: boolean };
+
+export interface SshMetrics {
+ sampledAt: number; hostname: string; system: string; architecture: string; cpuModel: string;
+ logicalCores: number; physicalCores: number | null; cpuPercent: number | null; load: number[]; uptimeSeconds: number;
+ memoryTotal: number; memoryUsed: number; swapTotal: number; swapUsed: number;
+ disks: { mount: string; total: number; used: number; free: number }[];
+ network: { name: string; received: number; sent: number }[]; gpu: string | null;
+}
+
+export interface SchedulingNode { id: string; name: string; hostname: string; status: string }
+export interface SchedulingDecision { selected_node_id: string | null; reason: string; nodes: {node_id: string; name: string; eligible: boolean; reason: string; cpu_free: number; memory_free: number; reserved_cpu: number}[] }

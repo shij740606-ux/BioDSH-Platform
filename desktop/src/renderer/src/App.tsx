@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { AppProvider, useApp } from './store';
-import Sidebar from './components/Sidebar';
+import Sidebar, { WindowControls } from './components/Sidebar';
 import ChatView from './views/ChatView';
 import StoreView from './views/StoreView';
 import DataView from './views/DataView';
@@ -8,6 +8,11 @@ import DatabaseView from './views/DatabaseView';
 import EnvView from './views/EnvView';
 import SettingsView from './views/SettingsView';
 import Onboarding from './views/Onboarding';
+import LoginView from './views/LoginView';
+import ServersView from './views/ServersView';
+import TasksView from './views/TasksView';
+import KnowledgeView from './views/KnowledgeView';
+import HostsView from './views/HostsView';
 import AskPopover from './components/AskPopover';
 import AutoUpdate from './components/AutoUpdate';
 import StarPrompt from './components/StarPrompt';
@@ -26,16 +31,22 @@ function useTheme() {
 
 function Shell() {
   useTheme();
-  const { ready, settings, tab } = useApp();
+  const { ready, settings, platform, tab } = useApp();
   if (!ready || !settings) return <div className="h-full w-full drag" />;
+  if (settings.platformUrl && !platform.authenticated) return <LoginView />;
   return (
     <LangContext.Provider value={resolveLang(settings.language)}>
     <div className="h-full w-full flex">
       <Sidebar />
-      <main className="flex-1 min-w-0 h-full relative">
+      <main className="app-main flex-1 min-w-0 h-full relative">
+        <div className="absolute right-3 top-[11px] z-40 no-drag"><WindowControls compact /></div>
         {tab === 'chat' && <ChatView />}
         {tab === 'data' && <DataView />}
         {tab === 'db' && <DatabaseView />}
+        {tab === 'knowledge' && <KnowledgeView />}
+        {tab === 'hosts' && <HostsView />}
+        {tab === 'tasks' && <TasksView />}
+        {tab === 'servers' && <ServersView />}
         {tab === 'store' && <StoreView />}
         {tab === 'env' && <EnvView />}
         {tab === 'settings' && <SettingsView />}

@@ -1,6 +1,18 @@
 .DS_Store
 *.log
 node_modules/
+desktop/resources/ssh/.stage-lock
+platform/.venv/
+.uv-cache/
+.npm-cache/
+.cargo-cache/
+platform/.env
+platform/*.db
+platform/.pytest_cache/
+platform/.pytest-temp/
+platform/.ruff_cache/
+platform/biodsh-artifacts/
+platform/**/__pycache__/
 # desktop build outputs (also covered by desktop/.gitignore)
 desktop/out/
 desktop/dist/
